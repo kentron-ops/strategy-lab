@@ -1,0 +1,34 @@
+{
+  "name": "strategy-lab",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Strategy Lab — a personal, offline-first research instrument for measuring trading edge honestly.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false"
+  },
+  "dependencies": {
+    "comlink": "^4.4.2",
+    "dexie": "^4.0.11",
+    "gsap": "^3.13.0",
+    "lightweight-charts": "^5.0.5",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vite-plugin-pwa": "^1.0.0",
+    "vitest": "^3.1.3"
+  }
+}
