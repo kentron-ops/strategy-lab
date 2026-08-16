@@ -10,3 +10,4 @@ dist-ssr/
 .vercel
 coverage/
 *.log
+*.tsbuildinfo
