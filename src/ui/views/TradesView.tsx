@@ -38,6 +38,7 @@ export function TradesView(): React.ReactElement {
           trades={trades}
           selected={selected}
           theme={s.theme}
+          height={380}
           onSelectTrade={setSelected}
         />
         {selected && <EventPath trade={selected} />}
