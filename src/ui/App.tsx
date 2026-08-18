@@ -22,6 +22,11 @@ const VIEWS: { key: ViewName; label: string }[] = [
   { key: 'DATA', label: 'DATA' },
 ]
 
+/**
+ * App shell — Carbon-style single-screen software.
+ * Fixed header (command bar) + footer, only the middle region scrolls, and the
+ * LAB workbench uses its own 3-column layout so there is never a page scroll.
+ */
 export function App(): React.ReactElement {
   const s = useLab()
   const j = useJournal()
@@ -38,6 +43,15 @@ export function App(): React.ReactElement {
 
   const active = s.activeDataset()
   const rc = s.recompute
+  const statusText = rc.running
+    ? `computing ${(rc.progress * 100).toFixed(0)}%`
+    : rc.error
+      ? 'error'
+      : rc.dirty
+        ? 'stale'
+        : rc.lastDurationMs !== null
+          ? `${rc.lastDurationMs}ms`
+          : 'idle'
 
   return (
     <div className="app">
@@ -45,8 +59,8 @@ export function App(): React.ReactElement {
         <span className="wordmark">
           STRATEGY<b>LAB</b>
         </span>
-        <span className="simulation-badge">SIMULATION ONLY</span>
-        <nav className="tabs">
+        <span className="simulation-badge">Simulation only</span>
+        <nav className="tabs" aria-label="Views">
           {VIEWS.map((v) => (
             <button
               key={v.key}
@@ -58,27 +72,20 @@ export function App(): React.ReactElement {
           ))}
         </nav>
         <div className="top-status">
-          <span>
-            <span className={`dot ${rc.running ? 'busy' : rc.error ? 'bad' : 'ok'}`} />{' '}
-            {rc.running
-              ? `computing ${(rc.progress * 100).toFixed(0)}%`
-              : rc.error
-                ? 'error'
-                : rc.dirty
-                  ? 'stale'
-                  : rc.lastDurationMs !== null
-                    ? `${rc.lastDurationMs}ms`
-                    : 'idle'}
-          </span>
           {active && (
             <span>
-              {active.symbol} · {active.timeframe}
+              {active.symbol} · {active.timeframe} · {active.candles.length.toLocaleString()} bars
             </span>
           )}
+          <span>
+            <span className={`dot ${rc.running ? 'busy' : rc.error ? 'bad' : 'ok'}`} />
+            {statusText}
+          </span>
           <button
             className="btn small"
             onClick={() => s.setTheme(s.theme === 'dark' ? 'light' : 'dark')}
             title="Toggle light/dark"
+            aria-label="Toggle theme"
           >
             {s.theme === 'dark' ? '☾' : '☀'}
           </button>
@@ -103,10 +110,10 @@ export function App(): React.ReactElement {
         )}
       </main>
 
-      <footer className="footer">
-        <span>SIMULATION ONLY — no order is ever sent, no execution code exists in this build</span>
-        <span>every probabilistic figure carries its sample size; if the interval spans zero, there is no measured edge</span>
-        <span>data lives in this browser only — export a backup from DATA</span>
+      <footer className="footer" role="contentinfo">
+        <span>SIMULATION ONLY — no order is ever sent, no execution code exists in this build.</span>
+        <span>Every probabilistic figure carries its sample size. If the interval spans zero, there is no measured edge.</span>
+        <span>Data lives in this browser only — export a backup from DATA.</span>
       </footer>
     </div>
   )

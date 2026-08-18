@@ -20,13 +20,14 @@ export function CandleChart({
   candles,
   trades = [],
   selected = null,
-  height = 380,
+  height,
   theme,
   onSelectTrade,
 }: {
   candles: Candle[]
   trades?: Trade[]
   selected?: Trade | null
+  /** Optional explicit height. When omitted the chart fills its container. */
   height?: number
   theme: 'dark' | 'light'
   onSelectTrade?: (t: Trade) => void
@@ -41,30 +42,32 @@ export function CandleChart({
     if (!host) return
 
     const dark = theme === 'dark'
+    // Carbon-derived palette; the redesign brief demands ≥4.5:1 on chart labels,
+    // and the previous #8b93a0 fell short on Gray 100.
     const chart = createChart(host, {
-      height,
       layout: {
         background: { color: 'transparent' },
-        textColor: dark ? '#8b93a0' : '#626a75',
-        fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+        textColor: dark ? '#c6c6c6' : '#393939',
+        fontFamily: "'IBM Plex Sans', system-ui, sans-serif",
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: dark ? '#1a1e25' : '#ececea' },
-        horzLines: { color: dark ? '#1a1e25' : '#ececea' },
+        vertLines: { color: dark ? '#26262a' : '#e0e0e0' },
+        horzLines: { color: dark ? '#26262a' : '#e0e0e0' },
       },
-      timeScale: { timeVisible: true, secondsVisible: false, borderColor: dark ? '#232830' : '#e2e2de' },
-      rightPriceScale: { borderColor: dark ? '#232830' : '#e2e2de' },
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: dark ? '#333338' : '#d0d0d0' },
+      rightPriceScale: { borderColor: dark ? '#333338' : '#d0d0d0' },
       crosshair: { mode: 0 },
       autoSize: true,
+      ...(height !== undefined ? { height } : {}),
     })
 
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: dark ? '#5d8b74' : '#3d7a5c',
-      downColor: dark ? '#a56c6c' : '#a05252',
+      upColor: dark ? '#24a148' : '#198038',
+      downColor: dark ? '#f24d5a' : '#da1e28',
       borderVisible: false,
-      wickUpColor: dark ? '#5d8b74' : '#3d7a5c',
-      wickDownColor: dark ? '#a56c6c' : '#a05252',
+      wickUpColor: dark ? '#24a148' : '#198038',
+      wickDownColor: dark ? '#f24d5a' : '#da1e28',
     })
 
     chartRef.current = chart
@@ -143,5 +146,11 @@ export function CandleChart({
     return () => chart.unsubscribeClick(handler)
   }, [trades, onSelectTrade])
 
-  return <div ref={hostRef} className="chart-box" style={{ height }} />
+  return (
+    <div
+      ref={hostRef}
+      className="chart-box"
+      style={height !== undefined ? { height } : { position: 'absolute', inset: 0 }}
+    />
+  )
 }

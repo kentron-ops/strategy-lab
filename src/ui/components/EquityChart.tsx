@@ -58,23 +58,27 @@ export function EquityChart({
   const startY = H - ((startingEquity - min) / (max - min)) * (H - 8) - 4
 
   return (
-    <div className="chart-box">
-      <svg viewBox={`0 0 ${W} ${H + DD_H + 14}`} preserveAspectRatio="none" style={{ height: H + DD_H + 14 }}>
+    <div className="chart-box" style={{ width: '100%', height: '100%', minHeight: 160 }}>
+      <svg
+        viewBox={`0 0 ${W} ${H + DD_H + 14}`}
+        preserveAspectRatio="none"
+        style={{ width: '100%', height: '100%', display: 'block' }}
+      >
         {/* starting equity reference */}
         {startingEquity >= min && startingEquity <= max ? (
-          <line x1={0} x2={W} y1={startY} y2={startY} stroke="var(--ghost)" strokeDasharray="3 5" strokeWidth={1} />
+          <line x1={0} x2={W} y1={startY} y2={startY} stroke="var(--text-secondary)" strokeDasharray="3 5" strokeWidth={1} />
         ) : null}
-        <path d={equityPath} fill="none" stroke="var(--accent)" strokeWidth={1.4} />
+        <path d={equityPath} fill="none" stroke="var(--accent)" strokeWidth={1.6} />
         <g transform={`translate(0, ${H + 14})`}>
-          <path d={ddPath} fill="color-mix(in srgb, var(--neg) 30%, transparent)" stroke="none" />
+          <path d={ddPath} fill="color-mix(in srgb, var(--neg) 40%, transparent)" stroke="none" />
         </g>
-        <text x={6} y={14} fill="var(--ghost)" fontSize={11} fontFamily="var(--mono)">
+        <text x={6} y={14} fill="var(--text-secondary)" fontSize={11} fontFamily="var(--mono)">
           {max.toFixed(0)}
         </text>
-        <text x={6} y={H - 4} fill="var(--ghost)" fontSize={11} fontFamily="var(--mono)">
+        <text x={6} y={H - 4} fill="var(--text-secondary)" fontSize={11} fontFamily="var(--mono)">
           {min.toFixed(0)}
         </text>
-        <text x={6} y={H + DD_H + 8} fill="var(--ghost)" fontSize={10} fontFamily="var(--mono)">
+        <text x={6} y={H + DD_H + 8} fill="var(--text-secondary)" fontSize={10} fontFamily="var(--mono)">
           drawdown ≤ {maxDd.toFixed(1)}%
         </text>
       </svg>

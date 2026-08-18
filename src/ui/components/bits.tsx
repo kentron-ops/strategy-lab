@@ -44,6 +44,22 @@ export function ShowMath({ math }: { math: MathInfo }): React.ReactElement {
   )
 }
 
+/**
+ * Reading pattern (V2 §9): every metric is a value plus a bad|ok|good range
+ * bar with a position marker, a one-line caption, and (where probabilistic)
+ * its confidence interval and sample size.
+ *
+ * `range` positions the marker in [0..1]. Provide it when a natural "how good
+ * is this" scale exists (win-rate 0..1, profit factor 0..3, drawdown 0..50%…).
+ * Skip it when the number has no such scale (raw money, holding times).
+ */
+export interface RangeSpec {
+  /** Marker position 0..1, clamped. */
+  position: number
+  /** One-line reading of where the marker sits. */
+  meaning: string
+}
+
 export interface MetricProps {
   label: string
   value: string
@@ -53,10 +69,12 @@ export interface MetricProps {
   math?: MathInfo
   stale?: boolean
   inadequate?: boolean
+  range?: RangeSpec
 }
 
-export function Metric({ label, value, tone = 'plain', sub, help, math, stale, inadequate }: MetricProps): React.ReactElement {
+export function Metric({ label, value, tone = 'plain', sub, help, math, stale, inadequate, range }: MetricProps): React.ReactElement {
   const toneClass = inadequate ? '' : tone === 'pos' ? 'pos' : tone === 'neg' ? 'neg' : tone === 'warn' ? 'warn-text' : ''
+  const pos = range ? Math.min(1, Math.max(0, range.position)) : 0
   return (
     <div className={`metric${stale ? ' stale' : ''}${inadequate ? ' inadequate' : ''}`}>
       <div className="label">
@@ -66,9 +84,118 @@ export function Metric({ label, value, tone = 'plain', sub, help, math, stale, i
       <div className={`value fresh ${toneClass}`} key={value}>
         {value}
       </div>
+      {range ? (
+        <div className="reading">
+          <div className="rangebar" role="img" aria-label={range.meaning}>
+            <span className="marker" style={{ left: `${pos * 100}%` }} />
+          </div>
+          <div className="meaning">{range.meaning}</div>
+        </div>
+      ) : null}
       {sub ? <div className="sub">{sub}</div> : null}
     </div>
   )
+}
+
+/**
+ * Small helpers to build a reading. Each turns a raw metric into a 0..1
+ * marker position and a one-line caption. These are UI-only mappings —
+ * they never change what the underlying metric computes.
+ */
+export const reading = {
+  winRate(point: number, n: number): RangeSpec {
+    // Coin flip = 50%, 60%+ = strong. Marker rescaled 0..1 across 30..70.
+    const position = Math.min(1, Math.max(0, (point - 0.3) / 0.4))
+    const meaning =
+      n < 30
+        ? 'sample too thin'
+        : point < 0.35
+          ? 'well below a coin flip'
+          : point < 0.5
+            ? 'below a coin flip'
+            : point < 0.6
+              ? 'roughly a coin flip'
+              : 'above a coin flip'
+    return { position, meaning }
+  },
+  profitFactor(pf: number): RangeSpec {
+    // <1 loses money, 1..1.3 marginal, 1.3+ good.
+    const position = Math.min(1, Math.max(0, (pf - 0.5) / 2))
+    const meaning =
+      !Number.isFinite(pf) || pf === 0
+        ? 'no trades to judge'
+        : pf < 1
+          ? 'loses money — gross loss exceeds gross profit'
+          : pf < 1.3
+            ? 'marginal — costs eat most of it'
+            : pf < 2
+              ? 'solid ratio of profit to loss'
+              : 'strong — but check the sample size'
+    return { position, meaning }
+  },
+  expectancyR(r: number): RangeSpec {
+    const position = Math.min(1, Math.max(0, (r + 0.5) / 1))
+    const meaning =
+      r < 0
+        ? 'losing edge per trade'
+        : r < 0.05
+          ? 'barely positive after costs — verify with the Prover'
+          : r < 0.2
+            ? 'measurable edge per trade'
+            : 'strong per-trade edge — sanity-check the sample'
+    return { position, meaning }
+  },
+  maxDrawdownPct(pct: number): RangeSpec {
+    // Lower is better. 0..50%. Reversed sense (right = worse).
+    const position = Math.min(1, Math.max(0, pct / 50))
+    const meaning =
+      pct < 10
+        ? 'shallow drawdown'
+        : pct < 25
+          ? 'normal drawdown for a risky rule'
+          : pct < 40
+            ? 'deep — would you sit through it?'
+            : 'catastrophic — near ruin'
+    return { position, meaning }
+  },
+  exposurePct(pct: number): RangeSpec {
+    const position = Math.min(1, Math.max(0, pct / 100))
+    const meaning =
+      pct < 5
+        ? 'barely in the market'
+        : pct < 30
+          ? 'selective exposure'
+          : pct < 70
+            ? 'often in the market'
+            : 'almost always in the market'
+    return { position, meaning }
+  },
+  trades(n: number): RangeSpec {
+    // 0..500. 30+ = adequate sample.
+    const position = Math.min(1, Math.max(0, n / 500))
+    const meaning =
+      n < 30
+        ? 'below the statistical floor'
+        : n < 100
+          ? 'adequate but tight'
+          : n < 300
+            ? 'good sample'
+            : 'large sample'
+    return { position, meaning }
+  },
+  costsShare(pct: number): RangeSpec {
+    // % of gross profit eaten by costs. Lower is better.
+    const position = Math.min(1, Math.max(0, pct / 100))
+    const meaning =
+      pct < 10
+        ? 'costs are negligible'
+        : pct < 30
+          ? 'costs are noticeable, edge holds'
+          : pct < 60
+            ? 'costs eat most of the profit'
+            : 'costs dominate — edge is fragile'
+    return { position, meaning }
+  },
 }
 
 export function CiText({ ci, pct = false, digits = 3 }: { ci: ConfidenceInterval; pct?: boolean; digits?: number }): string {
