@@ -11,3 +11,4 @@ dist-ssr/
 coverage/
 *.log
 *.tsbuildinfo
+scripts/differential/out/

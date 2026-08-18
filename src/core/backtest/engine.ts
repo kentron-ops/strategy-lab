@@ -14,7 +14,8 @@ import type {
 } from '../types'
 import { ENGINE_VERSION } from '../types'
 import { computeIndicators } from '../indicators'
-import { getStrategy, hydrateConfig } from '../strategy/registry'
+import { getStrategy } from '../strategy/registry'
+import { resolveStrategyConfig } from '../spec/resolve'
 import {
   cancelGroup,
   cancelOcoSiblings,
@@ -92,7 +93,7 @@ export function runBacktest(
   const startedAt = Date.now()
   const config: BacktestConfig = {
     ...configIn,
-    strategy: hydrateConfig(configIn.strategy),
+    strategy: resolveStrategyConfig(configIn.strategy),
   }
 
   const strategy = getStrategy(config.strategy.strategyId)
@@ -552,6 +553,33 @@ export function runBacktest(
     barsInPosition,
     totalBars,
   })
+
+  // ── runtime invariants (V2 §6) — the engine checks its own books every run
+  // and says so out loud if they do not balance. Never silent.
+  {
+    const ledgerSum = included.reduce((a, t) => a + t.netPnl, 0)
+    const equityDelta = risk.equity - config.risk.startingEquity
+    const tol = Math.max(1e-6, Math.abs(equityDelta) * 1e-9)
+    if (Math.abs(ledgerSum - equityDelta) > tol) {
+      warnings.push(
+        `INVARIANT VIOLATION: trade ledger sums to ${ledgerSum.toFixed(8)} but equity moved ${equityDelta.toFixed(8)}. Do not trust this result — report this as a bug.`,
+      )
+    }
+    for (const t of included) {
+      if (t.costs < -1e-9) {
+        warnings.push(
+          `INVARIANT VIOLATION: trade ${t.id} has negative costs (${t.costs}). A cost model that pays you is a bug.`,
+        )
+        break
+      }
+      if (Math.abs(t.netPnl - (t.grossPnl - t.costs)) > 1e-6) {
+        warnings.push(
+          `INVARIANT VIOLATION: trade ${t.id} net ≠ gross − costs. Do not trust this result.`,
+        )
+        break
+      }
+    }
+  }
 
   const ambiguity: AmbiguityReport = {
     ambiguousBars,

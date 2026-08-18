@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react'
-import * as Comlink from 'comlink'
-import { getOptimizerWorker, getBacktestWorker, useLab } from '../../state/store'
+import { compute, useLab } from '../../state/store'
 import { getStrategy } from '../../core/strategy/registry'
+import { resolveStrategyConfig } from '../../core/spec/resolve'
 import { Badge, Callout, Metric, Section, Tip, fmtNum, fmtPct } from '../components/bits'
 import {
   buildHeatmap,
@@ -18,7 +18,8 @@ import type { RobustnessResult } from '../../core/optimization/robustness'
 
 export function OptimizeView(): React.ReactElement {
   const s = useLab()
-  const strategy = getStrategy(s.strategyConfig.strategyId)
+  const resolvedId = resolveStrategyConfig(s.strategyConfig).strategyId
+  const strategy = getStrategy(resolvedId)
   const sweepable = strategy.paramSpec.filter((p) => p.sweep)
 
   const [selectedKeys, setSelectedKeys] = useState<string[]>(
@@ -32,8 +33,8 @@ export function OptimizeView(): React.ReactElement {
   const [busy, setBusy] = useState(false)
 
   const dims: SweepDimension[] = useMemo(
-    () => defaultSweepFor(s.strategyConfig.strategyId, selectedKeys),
-    [s.strategyConfig.strategyId, selectedKeys],
+    () => defaultSweepFor(resolvedId, selectedKeys),
+    [resolvedId, selectedKeys],
   )
   const comboCount = countCombinations(dims)
 
@@ -43,13 +44,16 @@ export function OptimizeView(): React.ReactElement {
     setBusy(true)
     setProgress({ done: 0, total: comboCount })
     try {
-      const result = await getOptimizerWorker().sweep(
+      const result = await compute.sweep(
         dataset,
         s.backtestConfig(),
         { dimensions: dims, maxCombinations: DEFAULT_MAX_COMBINATIONS },
-        Comlink.proxy((p: { done: number; total: number }) => setProgress({ done: p.done, total: p.total })),
+        (p) => setProgress({ done: p.done, total: p.total }),
       )
       s.setSweepResult(result)
+      // Every combination tried is a trial — the Prover's penalty depends on
+      // this count being honest.
+      s.addTrials(s.currentFamilyKey(), result.rows.length)
     } finally {
       setBusy(false)
       setProgress(null)
@@ -65,11 +69,11 @@ export function OptimizeView(): React.ReactElement {
       const bars = dataset.candles.length
       const trainBars = Math.floor(bars * 0.3)
       const testBars = Math.floor(bars * 0.12)
-      const result = await getBacktestWorker().walkForward(
+      const result = await compute.walkForward(
         dataset,
         s.backtestConfig(),
         { dimensions: dims, trainBars, testBars, objective, minTrainTrades: 5 },
-        Comlink.proxy((done: number, total: number) => setWfProgress({ done, total })),
+        (done, total) => setWfProgress({ done, total }),
       )
       setWf(result)
     } finally {
@@ -83,7 +87,7 @@ export function OptimizeView(): React.ReactElement {
     if (!dataset) return
     setBusy(true)
     try {
-      const result = await getBacktestWorker().robustness(dataset, s.backtestConfig(), {
+      const result = await compute.robustness(dataset, s.backtestConfig(), {
         keys: selectedKeys,
         steps: [0.1, 0.25],
         objective,

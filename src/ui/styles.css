@@ -266,3 +266,38 @@ details.reasons summary { cursor: pointer; font-family: var(--mono); font-size: 
   nav.tabs button { padding: 10px 14px; font-size: 13px; }
   button.btn { padding: 10px 16px; }
 }
+
+/* ── V2: spec editor, prover, library, show-the-math ───────────────────── */
+
+.spec-editor { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.spec-editor .rule-row { align-items: center; flex-wrap: wrap; }
+.spec-editor .check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--sec); cursor: pointer; }
+.spec-editor .grow { flex: 1; }
+.file-btn { cursor: pointer; }
+
+.gate-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin: 14px 0; }
+.gate { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: var(--panel2, rgba(255,255,255,0.02)); }
+.gate-pass { border-left: 3px solid var(--pos, #4caf7d); }
+.gate-fail { border-left: 3px solid var(--neg, #e05f5f); }
+.gate-pending { border-left: 3px solid var(--warn, #d9a441); }
+.gate-skipped { opacity: 0.65; }
+.gate p { margin: 6px 0 4px; }
+
+.big-number { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.show-math { display: inline-block; margin-left: 6px; font-weight: 400; }
+.show-math summary { cursor: pointer; font-size: 10px; color: var(--ghost); text-transform: lowercase; letter-spacing: 0.04em; }
+.show-math[open] { display: block; background: var(--panel2, rgba(255,255,255,0.03)); border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-top: 6px; }
+.show-math .math-inputs { margin: 6px 0; border-collapse: collapse; }
+.show-math .math-inputs td { padding: 1px 10px 1px 0; font-size: 11px; }
+
+.scatter { width: 100%; max-width: 640px; height: auto; }
+.scatter .axis { stroke: var(--line); stroke-width: 1; }
+.scatter .axis-label { fill: var(--ghost); font-size: 10px; font-family: var(--mono); }
+.scatter .pt { fill: var(--warn, #d9a441); opacity: 0.85; }
+.scatter .pt.proven { fill: var(--pos, #4caf7d); }
+.scatter .pt-label { fill: var(--sec); font-size: 9px; }
+
+.mono { font-family: var(--mono); }
+.small { font-size: 11px; }
+.row.wrap { flex-wrap: wrap; }

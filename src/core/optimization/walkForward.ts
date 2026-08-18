@@ -131,6 +131,13 @@ export interface WalkForwardSpec {
   testBars: number
   /** How far each window advances. Defaults to testBars (non-overlapping tests). */
   stepBars?: number
+  /**
+   * Purge/embargo gap (López de Prado): bars skipped between the end of
+   * training and the start of testing, so a trade OPENED in training cannot
+   * still be influencing bars the test window is judged on. Set it to at least
+   * the strategy's maximum holding period.
+   */
+  embargoBars?: number
   objective: ObjectiveKey
   minTrainTrades: number
 }
@@ -149,6 +156,7 @@ export function runWalkForward(
   const warnings: string[] = []
   const n = dataset.candles.length
   const step = spec.stepBars ?? spec.testBars
+  const embargo = Math.max(0, Math.round(spec.embargoBars ?? 0))
   const ind =
     opts.indicators ??
     computeIndicators(dataset.candles, baseConfig.indicators, dataset.timeframe)
@@ -158,7 +166,7 @@ export function runWalkForward(
 
   const totalWindows = Math.max(
     0,
-    Math.floor((n - spec.trainBars - spec.testBars) / step) + 1,
+    Math.floor((n - spec.trainBars - embargo - spec.testBars) / step) + 1,
   )
   if (totalWindows < 3) {
     warnings.push(
@@ -169,7 +177,7 @@ export function runWalkForward(
   let wIndex = 0
   for (
     let trainFrom = 0;
-    trainFrom + spec.trainBars + spec.testBars <= n;
+    trainFrom + spec.trainBars + embargo + spec.testBars <= n;
     trainFrom += step
   ) {
     if (opts.shouldAbort?.()) {
@@ -178,7 +186,7 @@ export function runWalkForward(
     }
 
     const trainTo = trainFrom + spec.trainBars - 1
-    const testFrom = trainTo + 1
+    const testFrom = trainTo + 1 + embargo
     const testTo = Math.min(n - 1, testFrom + spec.testBars - 1)
 
     // ── train: pick the best parameters using ONLY the training window

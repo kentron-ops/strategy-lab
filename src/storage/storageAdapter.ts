@@ -1,6 +1,16 @@
 import Dexie, { type Table } from 'dexie'
 import type { Dataset, StrategyConfig } from '../core/types'
 import type { JournalEntry } from '../core/journal/types'
+import type { StrategySpec } from '../core/spec/types'
+import type { ProofResult } from '../core/prover/prover'
+
+/** A spec stored in the Library, with its evidence when it has been proven. */
+export interface LibraryEntry {
+  id: string
+  spec: StrategySpec
+  evidence: ProofResult | null
+  savedAt: number
+}
 
 /**
  * StorageAdapter — everything persistent sits behind this interface (§3).
@@ -30,6 +40,11 @@ export interface StorageAdapter {
   saveJournalEntries(entries: JournalEntry[]): Promise<void>
   deleteJournalEntry(id: string): Promise<void>
 
+  // spec library
+  listLibrary(): Promise<LibraryEntry[]>
+  saveLibraryEntry(entry: LibraryEntry): Promise<void>
+  deleteLibraryEntry(id: string): Promise<void>
+
   // settings
   getSetting<T>(key: string, fallback: T): Promise<T>
   setSetting(key: string, value: unknown): Promise<void>
@@ -44,6 +59,7 @@ class LabDb extends Dexie {
   configs!: Table<StrategyConfig, string>
   journal!: Table<JournalEntry, string>
   settings!: Table<StoredSettings, string>
+  library!: Table<LibraryEntry, string>
 
   constructor() {
     super('strategy-lab')
@@ -52,6 +68,13 @@ class LabDb extends Dexie {
       configs: 'id, strategyId',
       journal: 'id, entryTime, symbol',
       settings: 'key',
+    })
+    this.version(2).stores({
+      datasets: 'id, symbol, timeframe',
+      configs: 'id, strategyId',
+      journal: 'id, entryTime, symbol',
+      settings: 'key',
+      library: 'id, savedAt',
     })
   }
 }
@@ -91,6 +114,16 @@ export class IndexedDbAdapter implements StorageAdapter {
     return this.db.journal.delete(id)
   }
 
+  listLibrary(): Promise<LibraryEntry[]> {
+    return this.db.library.orderBy('savedAt').reverse().toArray()
+  }
+  saveLibraryEntry(entry: LibraryEntry): Promise<void> {
+    return this.db.library.put(entry).then(() => undefined)
+  }
+  deleteLibraryEntry(id: string): Promise<void> {
+    return this.db.library.delete(id)
+  }
+
   async getSetting<T>(key: string, fallback: T): Promise<T> {
     const row = await this.db.settings.get(key)
     return row === undefined ? fallback : (row.value as T)
@@ -100,14 +133,15 @@ export class IndexedDbAdapter implements StorageAdapter {
   }
 
   async exportAll(): Promise<string> {
-    const [datasets, configs, journal, settings] = await Promise.all([
+    const [datasets, configs, journal, settings, library] = await Promise.all([
       this.db.datasets.toArray(),
       this.db.configs.toArray(),
       this.db.journal.toArray(),
       this.db.settings.toArray(),
+      this.db.library.toArray(),
     ])
     return JSON.stringify(
-      { version: EXPORT_VERSION, exportedAt: new Date().toISOString(), datasets, configs, journal, settings },
+      { version: EXPORT_VERSION, exportedAt: new Date().toISOString(), datasets, configs, journal, settings, library },
       null,
       0,
     )
@@ -120,6 +154,7 @@ export class IndexedDbAdapter implements StorageAdapter {
       configs?: StrategyConfig[]
       journal?: JournalEntry[]
       settings?: StoredSettings[]
+      library?: LibraryEntry[]
     }
     try {
       parsed = JSON.parse(json)
@@ -134,12 +169,13 @@ export class IndexedDbAdapter implements StorageAdapter {
     }
     await this.db.transaction(
       'rw',
-      [this.db.datasets, this.db.configs, this.db.journal, this.db.settings],
+      [this.db.datasets, this.db.configs, this.db.journal, this.db.settings, this.db.library],
       async () => {
         if (parsed.datasets?.length) await this.db.datasets.bulkPut(parsed.datasets)
         if (parsed.configs?.length) await this.db.configs.bulkPut(parsed.configs)
         if (parsed.journal?.length) await this.db.journal.bulkPut(parsed.journal)
         if (parsed.settings?.length) await this.db.settings.bulkPut(parsed.settings)
+        if (parsed.library?.length) await this.db.library.bulkPut(parsed.library)
       },
     )
     const counts = [

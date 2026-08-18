@@ -1,8 +1,13 @@
 import React, { useMemo, useState } from 'react'
-import { getBacktestWorker, useLab } from '../../state/store'
+import { compute, useLab } from '../../state/store'
+import { resolveStrategyConfig } from '../../core/spec/resolve'
 import { listStrategies, getStrategy } from '../../core/strategy/registry'
 import { Badge, Callout, Metric, Section, Tip, fmtMoney, fmtNum, fmtPct, toneOf, CiText } from '../components/bits'
 import { EquityChart } from '../components/EquityChart'
+import { SpecEditor } from '../components/SpecEditor'
+import { STR } from '../strings'
+import { PRESET_SPECS } from '../../core/spec/presets'
+import type { StrategySpec } from '../../core/spec/types'
 import type { IntrabarPolicy, ParamSpec } from '../../core/types'
 import { OBJECTIVES } from '../../core/optimization/scoring'
 import { roundTripCostInPrice } from '../../core/execution/costModel'
@@ -17,8 +22,30 @@ export function LabView(): React.ReactElement {
   const s = useLab()
   const result = s.result
   const stale = s.recompute.dirty || s.recompute.running
-  const strategy = getStrategy(s.strategyConfig.strategyId)
+  const strategy = getStrategy(resolveStrategyConfig(s.strategyConfig).strategyId)
+  const activeSpec = s.strategyConfig.spec as StrategySpec | undefined
   const [saveName, setSaveName] = useState('')
+
+  const pickStrategy = (value: string): void => {
+    if (value.startsWith('preset:')) {
+      const p = PRESET_SPECS.find((x) => `preset:${x.id}` === value)
+      if (p) s.useSpec(JSON.parse(JSON.stringify(p)) as StrategySpec)
+      return
+    }
+    if (value.startsWith('lib:')) {
+      const e = s.library.find((x) => `lib:${x.id}` === value)
+      if (e) s.useSpec(e.spec)
+      return
+    }
+    s.setStrategy(value)
+  }
+  const pickerValue = activeSpec
+    ? s.library.some((e) => e.id === activeSpec.id)
+      ? `lib:${activeSpec.id}`
+      : PRESET_SPECS.some((p) => p.id === activeSpec.id)
+        ? `preset:${activeSpec.id}`
+        : 'custom'
+    : s.strategyConfig.strategyId
 
   const m = result?.metrics ?? null
   const inadequate = m ? !m.sampleAdequate : false
@@ -33,25 +60,43 @@ export function LabView(): React.ReactElement {
   return (
     <div className="grid cols-2">
       <div>
-        <Section title="Strategy">
+        <Section title={STR.specTitle}>
           <div className="field">
             <label>Strategy</label>
-            <select
-              value={s.strategyConfig.strategyId}
-              onChange={(e) => s.setStrategy(e.target.value)}
-            >
-              {listStrategies().map((st) => (
-                <option key={st.id} value={st.id}>
-                  {st.name}
-                </option>
-              ))}
+            <select value={pickerValue} onChange={(e) => pickStrategy(e.target.value)}>
+              <optgroup label={STR.specPresets}>
+                {PRESET_SPECS.map((p) => (
+                  <option key={p.id} value={`preset:${p.id}`}>
+                    {p.name} (spec)
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label={STR.specBuiltins}>
+                {listStrategies().map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {st.name}
+                  </option>
+                ))}
+              </optgroup>
+              {s.library.length > 0 && (
+                <optgroup label={STR.specSaved}>
+                  {s.library.map((e) => (
+                    <option key={e.id} value={`lib:${e.id}`}>
+                      {e.spec.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {pickerValue === 'custom' && <option value="custom">custom spec (edited)</option>}
             </select>
             <span className="hint">{strategy.description}</span>
           </div>
 
-          {strategy.paramSpec.map((p) => (
-            <ParamField key={p.key} spec={p} />
-          ))}
+          {activeSpec ? (
+            <SpecEditor key={activeSpec.id + String(activeSpec.meta.createdAt)} spec={activeSpec} />
+          ) : (
+            strategy.paramSpec.map((p) => <ParamField key={p.key} spec={p} />)
+          )}
 
           <div className="row" style={{ marginTop: 10 }}>
             <div className="field">
@@ -378,8 +423,7 @@ function SensitivityPanel(): React.ReactElement {
     if (!dataset) return
     setRunning(true)
     try {
-      const worker = getBacktestWorker()
-      const strategy = getStrategy(s.strategyConfig.strategyId)
+      const strategy = getStrategy(resolveStrategyConfig(s.strategyConfig).strategyId)
       const numeric = strategy.paramSpec.filter(
         (p) => p.kind === 'number' && typeof s.strategyConfig.params[p.key] === 'number',
       )
@@ -387,7 +431,7 @@ function SensitivityPanel(): React.ReactElement {
       const read = (m: { expectancyR: { point: number }; netPnl: number; maxDrawdownPct: number }): number =>
         objective === 'expectancyR' ? m.expectancyR.point : objective === 'netPnl' ? m.netPnl : m.maxDrawdownPct
 
-      const centre = await worker.run(dataset, base)
+      const centre = await compute.backtest(dataset, base)
       const centreV = read(centre.metrics)
 
       const out: { key: string; down: number; up: number }[] = []
@@ -403,7 +447,7 @@ function SensitivityPanel(): React.ReactElement {
             ...base,
             strategy: { ...base.strategy, params: { ...base.strategy.params, [p.key]: x } },
           }
-          const r = await worker.run(dataset, cfg)
+          const r = await compute.backtest(dataset, cfg)
           vals.push(read(r.metrics) - centreV)
         }
         out.push({ key: p.key, down: vals[0], up: vals[1] })

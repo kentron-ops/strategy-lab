@@ -434,6 +434,13 @@ export interface StrategyConfig {
   strategyId: string
   name: string
   params: Record<string, number | string | boolean>
+  /**
+   * When present, this config runs a COMPILED SPEC rather than a built-in
+   * strategy. The spec travels inside the config so it crosses worker (and,
+   * later, network) boundaries as plain JSON. Typed as unknown here to keep
+   * the core type spine free of a dependency on the spec module.
+   */
+  spec?: unknown
   /** Set when the config passes out-of-sample and is locked (§13). */
   lockedAt: number | null
   /** Only bars after this date judge a locked strategy. */

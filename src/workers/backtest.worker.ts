@@ -7,6 +7,7 @@ import { testRobustness, type RobustnessResult, type RobustnessSpec } from '../c
 import { runMonteCarlo, type MonteCarloResult, type MonteCarloSpec } from '../core/optimization/monteCarlo'
 import type { Trade, Indicators } from '../core/types'
 import type { ObjectiveKey } from '../core/optimization/scoring'
+import { proveEdge, type ProofResult, type ProverOptions } from '../core/prover/prover'
 
 /**
  * Backtest worker. Keeps the UI thread free while the engine runs.
@@ -80,6 +81,22 @@ const api = {
 
   monteCarlo(trades: Trade[], spec: MonteCarloSpec): MonteCarloResult {
     return runMonteCarlo(trades, spec)
+  },
+
+  prove(
+    dataset: Dataset,
+    config: BacktestConfig,
+    opts: Omit<ProverOptions, 'onProgress' | 'shouldAbort' | 'indicators'>,
+    onProgress?: (stage: string, fraction: number) => void,
+  ): ProofResult {
+    abortRequested = false
+    const ind = indicatorsFor(dataset, config)
+    return proveEdge(dataset, config, {
+      ...opts,
+      indicators: ind,
+      onProgress,
+      shouldAbort: () => abortRequested,
+    })
   },
 
   abort(): void {

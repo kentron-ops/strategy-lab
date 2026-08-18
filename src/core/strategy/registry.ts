@@ -12,13 +12,23 @@ const ALL: Strategy[] = [simultaneousHedge, ocoBreakout, breakoutContinuation]
 
 const BY_ID = new Map<string, Strategy>(ALL.map((s) => [s.id, s]))
 
+/**
+ * Compiled-spec strategies register here at resolve time. Kept separate from
+ * the built-ins so listStrategies() stays the stable, curated list.
+ */
+const DYNAMIC = new Map<string, Strategy>()
+
 export const listStrategies = (): Strategy[] => ALL
 
+export function registerStrategy(s: Strategy): void {
+  DYNAMIC.set(s.id, s)
+}
+
 export function getStrategy(id: string): Strategy {
-  const s = BY_ID.get(id)
+  const s = BY_ID.get(id) ?? DYNAMIC.get(id)
   if (!s) {
     throw new Error(
-      `Unknown strategy "${id}". Known: ${[...BY_ID.keys()].join(', ')}.`,
+      `Unknown strategy "${id}". Known: ${[...BY_ID.keys()].join(', ')} (+${DYNAMIC.size} compiled).`,
     )
   }
   return s

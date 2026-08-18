@@ -6,6 +6,9 @@ import { fileURLToPath, URL } from 'node:url'
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url))
 
 export default defineConfig({
+  // '/' on Vercel/local; '/strategy-lab/' when built for GitHub Pages (set by
+  // the pages.yml workflow). The PWA plugin derives scope/start_url from this.
+  base: process.env.VITE_BASE || '/',
   plugins: [
     react(),
     VitePWA({
@@ -20,7 +23,6 @@ export default defineConfig({
         background_color: '#0b0d10',
         display: 'standalone',
         orientation: 'any',
-        start_url: '/',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },

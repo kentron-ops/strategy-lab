@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import * as Comlink from 'comlink'
 import type {
   BacktestConfig,
   BacktestResult,
@@ -19,13 +18,18 @@ import {
 } from '../core/types'
 import { buildSampleDataset, SAMPLE_DATASET_ID } from '../core/data/sample'
 import { makeConfig } from '../core/strategy/registry'
-import { storage } from '../storage/storageAdapter'
-import type { BacktestWorkerApi } from '../workers/backtest.worker'
-import type { OptimizerWorkerApi } from '../workers/optimizer.worker'
+import { storage, type LibraryEntry } from '../storage/storageAdapter'
+import { compute } from './localCompute'
 import type { JournalEntry } from '../core/journal/types'
 import type { SplitResult } from '../core/optimization/walkForward'
 import type { MonteCarloResult } from '../core/optimization/monteCarlo'
 import type { SweepResult } from '../core/optimization/sweep'
+import type { StrategySpec, AcceptIf } from '../core/spec/types'
+import { DEFAULT_ACCEPT_IF } from '../core/spec/types'
+import { makeSpecConfig } from '../core/spec/resolve'
+import { PRESET_SPECS } from '../core/spec/presets'
+import type { ProofResult } from '../core/prover/prover'
+import { hashObject } from '../core/util/hash'
 
 /**
  * The reactive computation graph (§8), implemented as a Zustand store plus a
@@ -40,7 +44,16 @@ import type { SweepResult } from '../core/optimization/sweep'
  * changed — that is what the `staleSince` timestamp is for.
  */
 
-export type ViewName = 'LAB' | 'RESULTS' | 'TRADES' | 'REPLAY' | 'OPTIMIZE' | 'JOURNAL' | 'DATA'
+export type ViewName =
+  | 'LAB'
+  | 'RESULTS'
+  | 'TRADES'
+  | 'REPLAY'
+  | 'OPTIMIZE'
+  | 'PROVER'
+  | 'LIBRARY'
+  | 'JOURNAL'
+  | 'DATA'
 
 export interface RecomputeState {
   running: boolean
@@ -70,6 +83,14 @@ interface LabState {
   monteCarlo: MonteCarloResult | null
   sweep: SweepResult | null
 
+  // ── V2: prover, library, trials
+  acceptIf: AcceptIf
+  proof: ProofResult | null
+  proving: { running: boolean; stage: string; progress: number; error: string | null }
+  library: LibraryEntry[]
+  /** Configurations tried per strategy family — feeds the trials penalty. */
+  trials: Record<string, number>
+
   // ── machinery
   recompute: RecomputeState
   view: ViewName
@@ -96,34 +117,24 @@ interface LabState {
   runMonteCarlo(): Promise<void>
   setSweepResult(r: SweepResult | null): void
 
+  // ── V2 actions
+  useSpec(spec: StrategySpec): void
+  setAcceptIf(patch: Partial<Pick<AcceptIf, 'minTrades' | 'minExpectancyR'>>): void
+  runProver(): Promise<void>
+  saveToLibrary(spec: StrategySpec, evidence: ProofResult | null): Promise<void>
+  removeFromLibrary(id: string): Promise<void>
+  addTrials(familyKey: string, n: number): void
+  currentFamilyKey(): string
+  currentTrials(): number
+
   activeDataset(): Dataset | null
   backtestConfig(): BacktestConfig
 }
 
-// ── workers ──────────────────────────────────────────────────────────────────
-
-let backtestWorker: Comlink.Remote<BacktestWorkerApi> | null = null
-let optimizerWorker: Comlink.Remote<OptimizerWorkerApi> | null = null
-
-export function getBacktestWorker(): Comlink.Remote<BacktestWorkerApi> {
-  if (!backtestWorker) {
-    const w = new Worker(new URL('../workers/backtest.worker.ts', import.meta.url), {
-      type: 'module',
-    })
-    backtestWorker = Comlink.wrap<BacktestWorkerApi>(w)
-  }
-  return backtestWorker
-}
-
-export function getOptimizerWorker(): Comlink.Remote<OptimizerWorkerApi> {
-  if (!optimizerWorker) {
-    const w = new Worker(new URL('../workers/optimizer.worker.ts', import.meta.url), {
-      type: 'module',
-    })
-    optimizerWorker = Comlink.wrap<OptimizerWorkerApi>(w)
-  }
-  return optimizerWorker
-}
+// ── compute ──────────────────────────────────────────────────────────────────
+// All heavy work goes through the ComputeAdapter (V2 §2). The store and views
+// never touch a Worker directly.
+export { compute }
 
 // ── debounced recompute ──────────────────────────────────────────────────────
 
@@ -150,17 +161,19 @@ async function doRecompute(): Promise<void> {
   })
 
   try {
-    const worker = getBacktestWorker()
     const config = state.backtestConfig()
-    const result = await worker.run(
-      dataset,
-      config,
-      Comlink.proxy((f: number) => {
-        if (runSeq !== mySeq) return
-        const cur = useLab.getState()
-        useLab.setState({ recompute: { ...cur.recompute, progress: f } })
-      }),
-    )
+    // Every evaluated configuration counts toward the trials penalty — the
+    // Prover cannot be honest about multiple testing if we do not count.
+    const paramHash = hashObject({ f: state.currentFamilyKey(), p: config.strategy.params })
+    if (!seenParamHashes.has(paramHash)) {
+      seenParamHashes.add(paramHash)
+      state.addTrials(state.currentFamilyKey(), 1)
+    }
+    const result = await compute.backtest(dataset, config, (f: number) => {
+      if (runSeq !== mySeq) return
+      const cur = useLab.getState()
+      useLab.setState({ recompute: { ...cur.recompute, progress: f } })
+    })
     if (runSeq !== mySeq) return // superseded by a newer edit
     useLab.setState({
       result,
@@ -190,6 +203,8 @@ async function doRecompute(): Promise<void> {
 
 // ── the store ────────────────────────────────────────────────────────────────
 
+const seenParamHashes = new Set<string>()
+
 export const useLab = create<LabState>((set, get) => ({
   datasets: [],
   activeDatasetId: null,
@@ -206,6 +221,12 @@ export const useLab = create<LabState>((set, get) => ({
   monteCarlo: null,
   sweep: null,
 
+  acceptIf: { ...DEFAULT_ACCEPT_IF, registeredAt: Date.now() },
+  proof: null,
+  proving: { running: false, stage: '', progress: 0, error: null },
+  library: [],
+  trials: {},
+
   recompute: {
     running: false,
     progress: 0,
@@ -219,12 +240,16 @@ export const useLab = create<LabState>((set, get) => ({
   hydrated: false,
 
   async hydrate() {
-    const [storedDatasets, configs, theme, activeId] = await Promise.all([
-      storage.listDatasets(),
-      storage.listConfigs(),
-      storage.getSetting<'dark' | 'light'>('theme', 'dark'),
-      storage.getSetting<string | null>('activeDatasetId', null),
-    ])
+    const [storedDatasets, configs, theme, activeId, library, trials, acceptIfStored] =
+      await Promise.all([
+        storage.listDatasets(),
+        storage.listConfigs(),
+        storage.getSetting<'dark' | 'light'>('theme', 'dark'),
+        storage.getSetting<string | null>('activeDatasetId', null),
+        storage.listLibrary(),
+        storage.getSetting<Record<string, number>>('trials', {}),
+        storage.getSetting<AcceptIf | null>('acceptIf', null),
+      ])
 
     let datasets = storedDatasets
     if (!datasets.some((d) => d.id === SAMPLE_DATASET_ID)) {
@@ -237,6 +262,9 @@ export const useLab = create<LabState>((set, get) => ({
       datasets,
       savedConfigs: configs,
       theme,
+      library,
+      trials,
+      acceptIf: acceptIfStored ?? { ...DEFAULT_ACCEPT_IF, registeredAt: Date.now() },
       activeDatasetId:
         activeId && datasets.some((d) => d.id === activeId)
           ? activeId
@@ -336,14 +364,14 @@ export const useLab = create<LabState>((set, get) => ({
   async runSplit() {
     const dataset = get().activeDataset()
     if (!dataset) return
-    const split = await getBacktestWorker().split(dataset, get().backtestConfig(), 0.7)
+    const split = await compute.split(dataset, get().backtestConfig(), 0.7)
     set({ split })
   },
 
   async runMonteCarlo() {
     const result = get().result
     if (!result || !result.trades.length) return
-    const mc = await getBacktestWorker().monteCarlo(result.trades, {
+    const mc = await compute.monteCarlo(result.trades, {
       runs: 2000,
       mode: 'BOOTSTRAP',
       pathLength: null,
@@ -356,6 +384,84 @@ export const useLab = create<LabState>((set, get) => ({
 
   setSweepResult(r) {
     set({ sweep: r })
+  },
+
+  // ── V2 actions ──────────────────────────────────────────────────────────
+
+  useSpec(spec) {
+    set({ strategyConfig: makeSpecConfig(spec), sweep: null, proof: null })
+    scheduleRecompute()
+  },
+
+  setAcceptIf(patch) {
+    const prev = get().acceptIf
+    const changed =
+      (patch.minTrades !== undefined && patch.minTrades !== prev.minTrades) ||
+      (patch.minExpectancyR !== undefined && patch.minExpectancyR !== prev.minExpectancyR)
+    const next: AcceptIf = {
+      ...prev,
+      ...patch,
+      // Changing thresholds after registration is recorded, not hidden.
+      revisions: changed ? prev.revisions + 1 : prev.revisions,
+      registeredAt: prev.registeredAt || Date.now(),
+    }
+    set({ acceptIf: next })
+    void storage.setSetting('acceptIf', next)
+  },
+
+  async runProver() {
+    const dataset = get().activeDataset()
+    if (!dataset) return
+    set({ proving: { running: true, stage: 'starting', progress: 0, error: null } })
+    try {
+      const proof = await compute.prove(
+        dataset,
+        get().backtestConfig(),
+        {
+          trials: get().currentTrials(),
+          acceptIf: get().acceptIf,
+        },
+        (stage, fraction) => {
+          set({ proving: { running: true, stage, progress: fraction, error: null } })
+        },
+      )
+      set({ proof, proving: { running: false, stage: 'done', progress: 1, error: null } })
+    } catch (err) {
+      set({
+        proving: {
+          running: false,
+          stage: 'error',
+          progress: 0,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      })
+    }
+  },
+
+  async saveToLibrary(spec, evidence) {
+    const entry: LibraryEntry = { id: spec.id, spec, evidence, savedAt: Date.now() }
+    await storage.saveLibraryEntry(entry)
+    set({ library: [entry, ...get().library.filter((e) => e.id !== entry.id)] })
+  },
+
+  async removeFromLibrary(id) {
+    await storage.deleteLibraryEntry(id)
+    set({ library: get().library.filter((e) => e.id !== id) })
+  },
+
+  addTrials(familyKey, n) {
+    const trials = { ...get().trials, [familyKey]: (get().trials[familyKey] ?? 0) + n }
+    set({ trials })
+    void storage.setSetting('trials', trials)
+  },
+
+  currentFamilyKey() {
+    const cfg = get().strategyConfig
+    return cfg.spec ? `spec:${(cfg.spec as StrategySpec).id}` : `builtin:${cfg.strategyId}`
+  },
+
+  currentTrials() {
+    return Math.max(1, get().trials[get().currentFamilyKey()] ?? 1)
   },
 
   activeDataset() {

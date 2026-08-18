@@ -12,22 +12,56 @@ export function Tip({ text, children }: { text: string; children: React.ReactNod
   )
 }
 
+/**
+ * show-the-math (V2 §6): every metric can reveal its formula and the exact
+ * inputs it was computed from, so any number on screen can be recomputed by
+ * hand from the exported ledger and must match.
+ */
+export interface MathInfo {
+  formula: string
+  inputs: Record<string, string | number>
+}
+
+export function ShowMath({ math }: { math: MathInfo }): React.ReactElement {
+  return (
+    <details className="show-math">
+      <summary>show the math</summary>
+      <div className="mono small">{math.formula}</div>
+      <table className="math-inputs">
+        <tbody>
+          {Object.entries(math.inputs).map(([k, v]) => (
+            <tr key={k}>
+              <td className="muted">{k}</td>
+              <td className="mono">{String(v)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="muted small">
+        Recompute this from the exported ledger (TRADES → export) — it must match.
+      </div>
+    </details>
+  )
+}
+
 export interface MetricProps {
   label: string
   value: string
   tone?: 'pos' | 'neg' | 'warn' | 'plain'
   sub?: string
   help: string
+  math?: MathInfo
   stale?: boolean
   inadequate?: boolean
 }
 
-export function Metric({ label, value, tone = 'plain', sub, help, stale, inadequate }: MetricProps): React.ReactElement {
+export function Metric({ label, value, tone = 'plain', sub, help, math, stale, inadequate }: MetricProps): React.ReactElement {
   const toneClass = inadequate ? '' : tone === 'pos' ? 'pos' : tone === 'neg' ? 'neg' : tone === 'warn' ? 'warn-text' : ''
   return (
     <div className={`metric${stale ? ' stale' : ''}${inadequate ? ' inadequate' : ''}`}>
       <div className="label">
         <Tip text={help}>{label}</Tip>
+        {math ? <ShowMath math={math} /> : null}
       </div>
       <div className={`value fresh ${toneClass}`} key={value}>
         {value}

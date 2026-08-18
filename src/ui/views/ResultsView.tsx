@@ -42,7 +42,17 @@ export function ResultsView(): React.ReactElement {
         <div className="metric-grid">
           <Metric label="Strategy" value={fmtMoney(m.netPnl)} tone={toneOf(m.netPnl)}
             sub={fmtPct(m.returnPct)}
-            help="Net result of the strategy, after costs." />
+            help="Net result of the strategy, after costs."
+            math={{
+              formula: 'netPnl = Σ trade.netPnl = Σ (grossPnl − costs) · returnPct = netPnl ÷ startingEquity × 100',
+              inputs: {
+                trades: m.trades,
+                'Σ grossPnl': fmtMoney(m.grossPnl),
+                'Σ costs': fmtMoney(m.totalCosts),
+                startingEquity: fmtMoney(m.startingEquity),
+                endingEquity: fmtMoney(m.endingEquity),
+              },
+            }} />
           {benchmark && (
             <Metric label="Buy & hold" value={fmtMoney(benchmark.netPnl)} tone={toneOf(benchmark.netPnl)}
               sub={fmtPct(benchmark.returnPct)}
@@ -96,7 +106,16 @@ export function ResultsView(): React.ReactElement {
               <Metric label="Out-of-sample" value={`${fmtNum(s.split.outOfSample.expectancyR.point, 3)}R`}
                 tone={toneOf(s.split.outOfSample.expectancyR.point)}
                 sub={`${s.split.outOfSample.trades} trades`}
-                help="Expectancy on the last 30% — data the parameters never saw. This is the number that matters." />
+                help="Expectancy on the last 30% — data the parameters never saw. This is the number that matters."
+                math={{
+                  formula: 'expectancyR = mean(trade.r) where r = netPnl ÷ riskAmount · CI = t-interval, 95%',
+                  inputs: {
+                    n: s.split.outOfSample.trades,
+                    mean: fmtNum(s.split.outOfSample.expectancyR.point, 4),
+                    'CI low': fmtNum(s.split.outOfSample.expectancyR.low, 4),
+                    'CI high': fmtNum(s.split.outOfSample.expectancyR.high, 4),
+                  },
+                }} />
               <Metric label="Retention" value={fmtPct(s.split.degradation * 100, 0)}
                 tone={s.split.degradation >= 0.4 ? 'plain' : 'warn'}
                 help="Out-of-sample ÷ in-sample. Some decay is normal. Below ~40% usually means the parameters memorised the past." />

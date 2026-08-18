@@ -3,6 +3,35 @@
 A personal, offline-first research instrument for measuring trading edge honestly.
 **Simulation only. No real orders. No profit promises.**
 
+## V2: Strategy Compiler + Edge Prover
+
+- **Strategy Compiler** — assemble strategies from typed rule blocks
+  (indicators, comparators, sessions, AND/OR) into serializable `StrategySpec`
+  JSON. The 3 built-in strategies ship as specs too; the compiled preset
+  reproduces the reference implementation **trade for trade** (tested).
+- **Edge Prover** — 7 gates (out-of-sample CI, purged/embargoed walk-forward,
+  neighbourhood robustness, Monte Carlo, sample adequacy + outlier dependence,
+  cost stress, forward test) plus statistical guards: **trials-adjusted
+  p-value** (Šidák over every configuration you tried), bootstrap expectancy
+  CI, random-entry benchmark with the candidate's own exits, buy-and-hold
+  benchmark, and pre-registered AcceptIf thresholds whose revisions are
+  recorded, not hidden. Verdicts: `PROVEN` / `INSUFFICIENT_EVIDENCE` /
+  `NOT_PROVEN` with a confidence grade. The word "certain" never appears
+  (tested).
+- **Library** — proven specs stored with their evidence cards; scatter of
+  expectancy vs max drawdown.
+- **Three trust locks** (all green):
+  1. 238 tests: golden fixtures, property-based (fast-check), no-look-ahead
+     proof, runtime invariant self-checks in every run.
+  2. **Independent second engine**: `scripts/differential/compare.py` reruns
+     the exported strategy with Python `backtesting.py` on the same CSV —
+     trade lists match exactly (0 mismatches, tolerance documented).
+  3. Every metric has `show the math` (formula + exact inputs) and the ledger
+     exports to CSV for hand recomputation.
+- **Backend-ready** — all heavy jobs route through `ComputeAdapter`
+  (local Web Workers today; see `docs/BACKEND_CONTRACT.md` for the drop-in
+  REST mapping a backend developer implements later).
+
 > There is no certain profitable signal. What this app gives you instead:
 > measured edge, probability with confidence intervals, exact risk control, and
 > machine-enforced discipline. If a screen ever shows "certainty", it is a bug.
