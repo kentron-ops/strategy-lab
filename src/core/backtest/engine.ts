@@ -555,29 +555,72 @@ export function runBacktest(
   })
 
   // ── runtime invariants (V2 §6) — the engine checks its own books every run
-  // and says so out loud if they do not balance. Never silent.
+  // and says so out loud if they do not balance. Never silent. Every guard
+  // here corresponds to a real class of bug we do not want silently shipped:
+  // if any of these ever trip in production, the result carries a warning
+  // the UI already surfaces as a red callout.
   {
+    const push = (msg: string): void => {
+      warnings.push(`INVARIANT VIOLATION: ${msg}`)
+    }
+
+    // 1) Conservation of money: sum of net P&L = equity change.
     const ledgerSum = included.reduce((a, t) => a + t.netPnl, 0)
     const equityDelta = risk.equity - config.risk.startingEquity
-    const tol = Math.max(1e-6, Math.abs(equityDelta) * 1e-9)
-    if (Math.abs(ledgerSum - equityDelta) > tol) {
-      warnings.push(
-        `INVARIANT VIOLATION: trade ledger sums to ${ledgerSum.toFixed(8)} but equity moved ${equityDelta.toFixed(8)}. Do not trust this result — report this as a bug.`,
+    const conservationTol = Math.max(1e-6, Math.abs(equityDelta) * 1e-9)
+    if (Math.abs(ledgerSum - equityDelta) > conservationTol) {
+      push(
+        `trade ledger sums to ${ledgerSum.toFixed(8)} but equity moved ${equityDelta.toFixed(8)}. Do not trust this result — report as a bug.`,
       )
     }
+
+    // 2) Per-trade identities: costs ≥ 0, net = gross − costs, R sign matches netPnl.
     for (const t of included) {
       if (t.costs < -1e-9) {
-        warnings.push(
-          `INVARIANT VIOLATION: trade ${t.id} has negative costs (${t.costs}). A cost model that pays you is a bug.`,
-        )
+        push(`trade ${t.id} has negative costs (${t.costs}). A cost model that pays you is a bug.`)
         break
       }
       if (Math.abs(t.netPnl - (t.grossPnl - t.costs)) > 1e-6) {
-        warnings.push(
-          `INVARIANT VIOLATION: trade ${t.id} net ≠ gross − costs. Do not trust this result.`,
-        )
+        push(`trade ${t.id} net ≠ gross − costs (${t.netPnl} vs ${t.grossPnl - t.costs}).`)
         break
       }
+      if (t.riskAmount > 0) {
+        const expectedR = t.netPnl / t.riskAmount
+        if (Math.abs(t.r - expectedR) > 1e-6) {
+          push(`trade ${t.id} R (${t.r}) does not equal netPnl ÷ riskAmount (${expectedR}).`)
+          break
+        }
+      }
+      if (t.mfeR < -1e-9 || t.maeR < -1e-9) {
+        push(`trade ${t.id} has a negative excursion (mfeR=${t.mfeR}, maeR=${t.maeR}). Both must be ≥ 0.`)
+        break
+      }
+    }
+
+    // 3) Equity-curve invariants: peak is monotonic non-decreasing, drawdown ≥ 0.
+    let prevPeak = -Infinity
+    let curveViolation: string | null = null
+    for (let k = 0; k < equityCurve.length; k++) {
+      const p = equityCurve[k]
+      if (p.peak + 1e-9 < prevPeak) {
+        curveViolation = `equity peak went backwards at bar ${p.bar}: prev ${prevPeak}, now ${p.peak}.`
+        break
+      }
+      if (p.drawdown < -1e-9) {
+        curveViolation = `equity drawdown is negative at bar ${p.bar}: ${p.drawdown}.`
+        break
+      }
+      prevPeak = p.peak
+    }
+    if (curveViolation) push(curveViolation)
+
+    // 4) No orphan exposures: after end-of-data cleanup, no positions or
+    //    pending orders should still be marked open.
+    if (positions.length !== 0) {
+      push(`${positions.length} position(s) still open after end-of-data cleanup.`)
+    }
+    if (pending.some((o) => o.status === 'PENDING')) {
+      push('orders left in PENDING state after end-of-data cleanup.')
     }
   }
 

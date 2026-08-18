@@ -9,6 +9,7 @@ import { resolveBar } from '../execution/intrabar'
 import { computeMetrics } from '../backtest/metrics'
 import { validateCandles } from '../data/validators'
 import { fnv1a, stableStringify } from '../util/hash'
+import { OPTI_CONS_BLOWUP } from './counterexamples/optiConsBlowup'
 
 /**
  * Property-based tests (V2 §6): thousands of randomized inputs asserting the
@@ -22,8 +23,6 @@ import { fnv1a, stableStringify } from '../util/hash'
  * fixed; if the engine is ever changed and a real bug shows up under a
  * specific seed, that seed can be pinned here as a regression case.
  */
-
-const SEED = 20260818
 
 // ── generators ──────────────────────────────────────────────────────────────
 
@@ -103,7 +102,7 @@ describe('property: conservation of P&L', () => {
           }
         },
       ),
-      { numRuns: 25, seed: SEED },
+      { numRuns: 1000 },
     )
   })
 })
@@ -136,7 +135,7 @@ describe('property: sizing never risks more than configured', () => {
           }
         },
       ),
-      { numRuns: 500, seed: SEED },
+      { numRuns: 1000 },
     )
   })
 })
@@ -170,11 +169,23 @@ describe('property: CONSERVATIVE is never better than OPTIMISTIC on the same bar
           }
         },
       ),
-      { numRuns: 300, seed: SEED },
+      { numRuns: 1000 },
     )
   })
 
-  it('over a whole run, optimistic ending equity is never below conservative when ambiguity exists', () => {
+  it('per matched ambiguous trade, OPTIMISTIC per-unit gross is never below CONSERVATIVE', () => {
+    // Previous version compared ENDING EQUITY across the two runs. That was
+    // wrong: with fixed-fractional sizing, a better ambiguous outcome grows
+    // equity and enlarges the NEXT trade's quantity — which then magnifies
+    // whatever happens next, in either direction. Same-entries + same-side
+    // does NOT imply same total P&L under equity-fed sizing.
+    //
+    // The invariant that actually holds, and that the intrabar policy
+    // guarantees, is per-trade at per-unit-qty level: for a matched pair of
+    // trades entered on the same bar, if one exited ambiguously, OPTIMISTIC
+    // must not have made LESS price movement than CONSERVATIVE on that
+    // ambiguous exit. That is a property of the policy alone, independent of
+    // sizing feedback.
     fc.assert(
       fc.property(candleSeriesArb(150, 350), (candles) => {
         const mk = (intrabar: 'CONSERVATIVE' | 'OPTIMISTIC') =>
@@ -184,20 +195,27 @@ describe('property: CONSERVATIVE is never better than OPTIMISTIC on the same bar
           )
         const cons = mk('CONSERVATIVE')
         const opti = mk('OPTIMISTIC')
-        // Identical decisions, only ambiguous bars resolved differently — but a
-        // different exit can change later entries, so compare per-policy totals
-        // only when both saw the same trades. When they did, optimistic ≥.
-        if (
-          cons.ambiguity.ambiguousTrades > 0 &&
-          cons.trades.length === opti.trades.length &&
-          cons.trades.every((t, i) => t.entryBar === opti.trades[i].entryBar)
-        ) {
-          expect(opti.metrics.endingEquity).toBeGreaterThanOrEqual(
-            cons.metrics.endingEquity - 1e-6,
-          )
+
+        const n = Math.min(cons.trades.length, opti.trades.length)
+        for (let i = 0; i < n; i++) {
+          const c = cons.trades[i]
+          const o = opti.trades[i]
+          if (c.entryBar !== o.entryBar) break // once divergence starts, later pairs are unrelated
+          if (c.side !== o.side) break
+          // Only relevant when at least one of the two matched exits was ambiguous.
+          if (!c.ambiguous && !o.ambiguous) continue
+          const sign = c.side === 'LONG' ? 1 : -1
+          const cGrossPerUnit = sign * (c.exitPrice - c.entryPrice)
+          const oGrossPerUnit = sign * (o.exitPrice - o.entryPrice)
+          expect(oGrossPerUnit).toBeGreaterThanOrEqual(cGrossPerUnit - 1e-6)
         }
       }),
-      { numRuns: 20, seed: SEED },
+      {
+        numRuns: 1000,
+        // Regression case captured on a live property run — see the
+        // counterexamples file for its provenance.
+        examples: [[OPTI_CONS_BLOWUP]],
+      },
     )
   })
 })
@@ -235,7 +253,7 @@ describe('property: metrics never produce NaN and respect identities', () => {
           }
         },
       ),
-      { numRuns: 200, seed: SEED },
+      { numRuns: 1000 },
     )
   })
 })
@@ -253,7 +271,7 @@ describe('property: generated candles are always valid, and hashing is stable', 
         const b = { z: [1, 2], y: { a: 3, b: 2 }, x: 1 }
         expect(fnv1a(stableStringify(a))).toBe(fnv1a(stableStringify(b)))
       }),
-      { numRuns: 50, seed: SEED },
+      { numRuns: 50 },
     )
   })
 })
@@ -271,7 +289,7 @@ describe('property: the engine is a pure function of its inputs', () => {
         expect(JSON.stringify(b.trades)).toBe(JSON.stringify(a.trades))
         expect(JSON.stringify(b.metrics)).toBe(JSON.stringify(a.metrics))
       }),
-      { numRuns: 10, seed: SEED },
+      { numRuns: 1000 },
     )
   })
 })

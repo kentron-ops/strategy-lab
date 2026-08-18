@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { useLab } from '../../state/store'
-import { Badge, Callout, Section, fmtMoney, fmtNum } from '../components/bits'
+import { Badge, Callout, Section, downloadText, fmtMoney, fmtNum } from '../components/bits'
 import { CandleChart } from '../components/CandleChart'
 import { formatDate, formatDuration } from '../../core/util/time'
 import type { Trade } from '../../core/types'
@@ -44,7 +44,28 @@ export function TradesView(): React.ReactElement {
         {selected && <EventPath trade={selected} />}
       </Section>
 
-      <Section title={`Trade ledger — ${trades.length} trades`} right={<span className="badge">SIMULATION ONLY</span>}>
+      <Section
+        title={`Trade ledger — ${trades.length} trades`}
+        right={
+          <>
+            <button
+              className="btn small"
+              disabled={!trades.length}
+              onClick={() =>
+                downloadText(
+                  `ledger-${result.snapshot.symbol}-${result.snapshot.timeframe}-${new Date(result.snapshot.computedAt).toISOString().slice(0, 10)}.csv`,
+                  tradesToCsv(trades),
+                  'text/csv',
+                )
+              }
+              title="Download the full trade ledger as CSV so you can recompute expectancy, win rate and profit factor in Excel and match."
+            >
+              Export CSV
+            </button>
+            <span className="badge">SIMULATION ONLY</span>
+          </>
+        }
+      >
         <div className="table-wrap" style={{ maxHeight: 420, overflowY: 'auto' }}>
           <table className="data">
             <thead>
@@ -83,6 +104,85 @@ export function TradesView(): React.ReactElement {
       </Section>
     </>
   )
+}
+
+/**
+ * Serialise the trade ledger to CSV. Every column is exactly the same field
+ * the engine computed with, so a user can open the file in Excel or a
+ * notebook and recompute expectancy / win rate / profit factor by hand — and
+ * they must match what the app shows. This is the ledger side of the trust
+ * lock: no metric on screen is real if the underlying rows are not shown.
+ */
+function tradesToCsv(trades: Trade[]): string {
+  const header = [
+    'id',
+    'strategyId',
+    'side',
+    'qty',
+    'tag',
+    'session',
+    'regime',
+    'entry_time',
+    'entry_bar',
+    'entry_price',
+    'exit_time',
+    'exit_bar',
+    'exit_price',
+    'exit_reason',
+    'ambiguous',
+    'excluded',
+    'stop_loss',
+    'take_profit',
+    'r_distance',
+    'risk_amount',
+    'gross_pnl',
+    'costs',
+    'net_pnl',
+    'r',
+    'mfe_r',
+    'mae_r',
+    'bars_held',
+    'holding_ms',
+    'equity_after',
+  ].join(',')
+
+  const rows = trades.map((t) =>
+    [
+      t.id,
+      t.strategyId,
+      t.side,
+      t.qty,
+      t.tag,
+      t.session,
+      `${t.regime.vol}/${t.regime.trend}`,
+      new Date(t.entryTime).toISOString(),
+      t.entryBar,
+      t.entryPrice,
+      new Date(t.exitTime).toISOString(),
+      t.exitBar,
+      t.exitPrice,
+      t.exitReason,
+      t.ambiguous ? 1 : 0,
+      t.excluded ? 1 : 0,
+      t.stopLoss,
+      t.takeProfit ?? '',
+      t.rDistance,
+      t.riskAmount,
+      t.grossPnl,
+      t.costs,
+      t.netPnl,
+      t.r,
+      t.mfeR,
+      t.maeR,
+      t.barsHeld,
+      t.holdingMs,
+      t.equityAfter,
+    ]
+      .map((v) => (typeof v === 'string' && /[,"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : String(v)))
+      .join(','),
+  )
+
+  return [header, ...rows].join('\n')
 }
 
 function EventPath({ trade }: { trade: Trade }): React.ReactElement {
