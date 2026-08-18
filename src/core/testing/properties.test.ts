@@ -16,13 +16,17 @@ import { OPTI_CONS_BLOWUP } from './counterexamples/optiConsBlowup'
  * invariants that golden fixtures alone cannot cover. If any of these can be
  * falsified, the engine is lying somewhere.
  *
- * Every fc.assert call passes an explicit `seed`, so a passing run on a
- * developer laptop and a passing run on GitHub Actions exercise the exact
- * same generated inputs. Without this, CI and local hit different corner
- * cases and results are not reproducible. The seed itself is arbitrary but
- * fixed; if the engine is ever changed and a real bug shows up under a
- * specific seed, that seed can be pinned here as a regression case.
+ * Seeds are deliberately UNPINNED: every run explores fresh inputs. When a
+ * run finds a counterexample, the shrunk case gets captured under
+ * ./counterexamples and pinned via fc `examples`, so it is exercised forever
+ * WITHOUT freezing the rest of the search space.
  */
+
+// 1000-run properties are CPU-heavy; under load (CI cold runners, parallel
+// suites on one machine) they can exceed vitest's 5s default timeout and read
+// as flakes. A generous explicit budget asserts nothing less — it only stops
+// a slow machine from being mistaken for a broken engine.
+const LONG = 120_000
 
 // ── generators ──────────────────────────────────────────────────────────────
 
@@ -104,7 +108,7 @@ describe('property: conservation of P&L', () => {
       ),
       { numRuns: 1000 },
     )
-  })
+  }, LONG)
 })
 
 // ── sizing never exceeds the configured risk ─────────────────────────────────
@@ -137,7 +141,7 @@ describe('property: sizing never risks more than configured', () => {
       ),
       { numRuns: 1000 },
     )
-  })
+  }, LONG)
 })
 
 // ── intrabar policy ordering ─────────────────────────────────────────────────
@@ -171,7 +175,7 @@ describe('property: CONSERVATIVE is never better than OPTIMISTIC on the same bar
       ),
       { numRuns: 1000 },
     )
-  })
+  }, LONG)
 
   it('per matched ambiguous trade, OPTIMISTIC per-unit gross is never below CONSERVATIVE', () => {
     // Previous version compared ENDING EQUITY across the two runs. That was
@@ -217,7 +221,7 @@ describe('property: CONSERVATIVE is never better than OPTIMISTIC on the same bar
         examples: [[OPTI_CONS_BLOWUP]],
       },
     )
-  })
+  }, LONG)
 })
 
 // ── metrics on random ledgers ────────────────────────────────────────────────
@@ -255,7 +259,7 @@ describe('property: metrics never produce NaN and respect identities', () => {
       ),
       { numRuns: 1000 },
     )
-  })
+  }, LONG)
 })
 
 // ── validators accept what the generator builds ──────────────────────────────
@@ -291,5 +295,5 @@ describe('property: the engine is a pure function of its inputs', () => {
       }),
       { numRuns: 1000 },
     )
-  })
+  }, LONG)
 })

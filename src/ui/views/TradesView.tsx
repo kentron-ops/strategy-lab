@@ -66,7 +66,7 @@ export function TradesView(): React.ReactElement {
           </>
         }
       >
-        <div className="table-wrap" style={{ maxHeight: 420, overflowY: 'auto' }}>
+        <div className="table-wrap">
           <table className="data">
             <thead>
               <tr>

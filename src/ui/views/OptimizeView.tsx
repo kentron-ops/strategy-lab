@@ -184,7 +184,7 @@ export function OptimizeView(): React.ReactElement {
           )}
 
           <Section title="Top configurations">
-            <div className="table-wrap" style={{ maxHeight: 380, overflowY: 'auto' }}>
+            <div className="table-wrap">
               <table className="data">
                 <thead>
                   <tr>

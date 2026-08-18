@@ -334,14 +334,14 @@ input[type='text'], input[type='number'], input[type='search'], select, textarea
   background: var(--bg-2);
   border: 1px solid var(--line);
   color: var(--text-primary);
-  padding: 4px 8px;
+  padding: 4px 10px;
   border-radius: 0;
   font-size: var(--fs-13);
   outline: none;
   transition: border-color 0.12s, background 0.12s;
   min-width: 0;
   width: 100%;
-  height: 28px;
+  height: 32px; /* one comfortable control height everywhere */
   box-sizing: border-box;
 }
 textarea { height: auto; padding-top: 6px; padding-bottom: 6px; }
@@ -369,10 +369,16 @@ input:disabled, select:disabled { color: var(--text-disabled); }
 
 .field .hint { color: var(--text-ghost); font-size: 11px; margin-top: 2px; }
 
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2) var(--s-3); }
-.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-2) var(--s-3); }
-.row { display: flex; gap: var(--s-2); align-items: center; flex-wrap: nowrap; }
-.row.wrap { flex-wrap: wrap; }
+.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3) var(--s-3); }
+.grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3) var(--s-3); }
+.grid-2 > *, .grid-3 > * { min-width: 0; }
+/* In a narrow inputs column, two columns of fields become cramped — collapse. */
+@media (max-width: 1440px) {
+  .col-left .grid-2 { grid-template-columns: 1fr; }
+}
+.row { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
+.row > * { min-width: 0; }
+.row.nowrap { flex-wrap: nowrap; }
 .grow { flex: 1; min-width: 0; }
 .spacer { flex: 1; }
 
@@ -443,12 +449,12 @@ input:disabled, select:disabled { color: var(--text-disabled); }
 /* ── reading-pattern metric tile (the star of the redesign) ───────── */
 
 .metric {
-  padding: var(--s-2) var(--s-3);
+  padding: var(--s-3);
   background: transparent;
   border-top: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 .metric:first-child { border-top: none; }
@@ -534,16 +540,17 @@ input:disabled, select:disabled { color: var(--text-disabled); }
   line-height: 1.35;
 }
 
-/* Grid of metric tiles */
-.tiles { display: grid; gap: 0; grid-template-columns: repeat(2, 1fr); }
-.tiles.tiles-1 { grid-template-columns: 1fr; }
-.tiles.tiles-3 { grid-template-columns: repeat(3, 1fr); }
-.tiles.tiles-4 { grid-template-columns: repeat(4, 1fr); }
-.tiles > .metric { border-right: 1px solid var(--line); }
-.tiles > .metric:nth-child(2n) { border-right: none; }
-.tiles.tiles-3 > .metric:nth-child(3n) { border-right: none; }
-.tiles.tiles-3 > .metric:nth-child(3n+1) { border-right: 1px solid var(--line); }
-.tiles.tiles-4 > .metric:nth-child(4n) { border-right: none; }
+/* Grid of metric tiles — auto-fill so a WIDER results column shows MORE cards
+   per row (cards multiply, they do not stretch). This is what makes the
+   drag-resize of the right column useful. */
+.tiles {
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+}
+.tiles > .metric { background: var(--bg-1); border: none; }
 
 /* Old .metric-grid retained for views that use it */
 .metric-grid { display: grid; gap: 0; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
@@ -635,9 +642,10 @@ tbody tr:hover td { background: var(--bg-2); }
 
 .workbench {
   display: grid;
-  grid-template-columns: 320px 1fr 340px;
-  gap: 1px;
-  background: var(--line);
+  /* widths are user-draggable via the col-resizer handles */
+  grid-template-columns: var(--left-w, 320px) 6px 1fr 6px var(--right-w, 340px);
+  gap: 0;
+  background: var(--bg-0);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -646,8 +654,65 @@ tbody tr:hover td { background: var(--bg-2); }
   background: var(--bg-0);
   min-width: 0;
   min-height: 0;
-  overflow: auto;
-  padding: var(--s-3);
+  overflow-y: auto;   /* ONE clean vertical scroll per side column */
+  overflow-x: hidden; /* content must never push sideways */
+  padding: var(--s-4);
+}
+
+/* drag handles between columns */
+.col-resizer {
+  cursor: col-resize;
+  background: var(--line);
+  position: relative;
+  z-index: 5;
+  transition: background 0.12s;
+}
+.col-resizer:hover { background: var(--accent); }
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 -4px; /* generous grab zone without visual bulk */
+}
+
+/* left/right column caption line */
+.col-caption {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding-bottom: var(--s-3);
+  margin-bottom: var(--s-3);
+  border-bottom: 1px solid var(--line);
+}
+
+/* input section block: one calm card per group */
+.lab-section {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-1);
+  margin-bottom: var(--s-4);
+  overflow: hidden;
+}
+.lab-section > .subsection {
+  border-top: none;
+  padding: 0;
+  margin: 0;
+}
+.lab-section > .subsection > summary {
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  margin: 0;
+}
+.lab-section > .subsection:not([open]) > summary { border-bottom: none; }
+.lab-section > .subsection > .body {
+  padding: var(--s-4);
 }
 .workbench .col-center {
   display: grid;
@@ -704,47 +769,55 @@ tbody tr:hover td { background: var(--bg-2); }
 .slider-field { min-width: 0; }
 .slider-pair {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px;
-  gap: var(--s-2);
+  grid-template-columns: minmax(0, 1fr) 84px;
+  gap: var(--s-3);
   align-items: center;
+  min-width: 0;
 }
-.slider-pair input[type='number'] { height: 28px; }
+.slider-pair input[type='number'] {
+  height: 32px;
+  font-size: var(--fs-14);
+  text-align: right;
+}
 
 input[type='range'] {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 28px;             /* full hit target, thumb-friendly on phones */
+  height: 32px;             /* full-width track, generous hit target */
   background: transparent;
   cursor: pointer;
   margin: 0;
   padding: 0;
   border: none;
+  min-width: 0;
 }
 input[type='range']::-webkit-slider-runnable-track {
-  height: 3px;
+  height: 4px;
   background: var(--line-strong);
-  border-radius: 0;
+  border-radius: 2px;
 }
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 12px;
-  height: 12px;
-  margin-top: -4.5px;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
   background: var(--accent);
   border: 2px solid var(--bg-1);
   border-radius: 50%;
   transition: transform 0.1s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
-input[type='range']::-webkit-slider-thumb:hover { transform: scale(1.25); }
+input[type='range']::-webkit-slider-thumb:hover { transform: scale(1.2); }
 input[type='range']::-moz-range-track {
-  height: 3px;
+  height: 4px;
   background: var(--line-strong);
+  border-radius: 2px;
 }
 input[type='range']::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   background: var(--accent);
   border: 2px solid var(--bg-1);
   border-radius: 50%;
@@ -755,14 +828,14 @@ input[type='range']:focus-visible { outline: 1px solid var(--accent); outline-of
   display: flex;
   justify-content: space-between;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-ghost);
   margin-top: 2px;
   /* bounds only span the slider, not the number box */
-  width: calc(100% - 72px - var(--s-2));
+  width: calc(100% - 84px - var(--s-3));
 }
 
-.param-list { display: flex; flex-direction: column; gap: var(--s-3); }
+.param-list { display: flex; flex-direction: column; gap: var(--s-4); }
 
 /* FIND BEST */
 .find-best {
@@ -824,12 +897,9 @@ input[type='range']:focus-visible { outline: 1px solid var(--accent); outline-of
    <900     single column, segmented [Inputs|Chart|Results] + sticky
             verdict always visible. No horizontal page scroll anywhere. */
 
-@media (max-width: 1440px) {
-  .workbench { grid-template-columns: 300px 1fr 320px; }
-}
-
 @media (max-width: 1280px) and (min-width: 900px) {
-  .workbench { grid-template-columns: 300px 1fr; }
+  .workbench { grid-template-columns: minmax(240px, var(--left-w, 300px)) 6px 1fr; }
+  .col-resizer:last-of-type { display: none; }
   .workbench > .col-right {
     position: fixed;
     top: var(--header-h);
@@ -861,6 +931,7 @@ input[type='range']:focus-visible { outline: 1px solid var(--accent); outline-of
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
   }
+  .col-resizer { display: none; }
   .mobile-bar {
     display: block;
     grid-row: 1;

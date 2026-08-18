@@ -56,6 +56,53 @@ export function LabView(): React.ReactElement {
   const [pane, setPane] = useState<'inputs' | 'chart' | 'results'>('chart')
   const [drawerOpen, setDrawerOpen] = useState(false)
 
+  // Drag-resizable column widths (desktop only). Persisted so the user's
+  // preferred layout survives reloads. The RESULT tiles reflow into more
+  // columns as the right panel widens — cards multiply, they do not stretch.
+  const [leftW, setLeftW] = useState<number>(() =>
+    Number(localStorage.getItem('lab:leftW')) || 320,
+  )
+  const [rightW, setRightW] = useState<number>(() =>
+    Number(localStorage.getItem('lab:rightW')) || 340,
+  )
+  const dragRef = React.useRef<{
+    side: 'left' | 'right'
+    startX: number
+    startW: number
+    lastW: number
+  } | null>(null)
+
+  const startDrag = (side: 'left' | 'right') => (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const startW = side === 'left' ? leftW : rightW
+    dragRef.current = { side, startX: e.clientX, startW, lastW: startW }
+    const onMove = (ev: MouseEvent): void => {
+      const d = dragRef.current
+      if (!d) return
+      const delta = ev.clientX - d.startX
+      const next =
+        d.side === 'left'
+          ? Math.min(520, Math.max(240, d.startW + delta))
+          : Math.min(720, Math.max(280, d.startW - delta))
+      d.lastW = next // tracked on the ref so mouseup never sees a stale value
+      if (d.side === 'left') setLeftW(next)
+      else setRightW(next)
+    }
+    const onUp = (): void => {
+      const d = dragRef.current
+      if (d) {
+        localStorage.setItem(d.side === 'left' ? 'lab:leftW' : 'lab:rightW', String(d.lastW))
+      }
+      dragRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    document.body.style.cursor = 'col-resize'
+  }
+
   const pickStrategy = (value: string): void => {
     if (value.startsWith('preset:')) {
       const p = PRESET_SPECS.find((x) => `preset:${x.id}` === value)
@@ -122,7 +169,10 @@ export function LabView(): React.ReactElement {
     : 'computing…'
 
   return (
-    <div className={`workbench pane-${pane}${drawerOpen ? ' drawer-open' : ''}`}>
+    <div
+      className={`workbench pane-${pane}${drawerOpen ? ' drawer-open' : ''}`}
+      style={{ ['--left-w' as string]: `${leftW}px`, ['--right-w' as string]: `${rightW}px` }}
+    >
       {/* Phone/tablet: segmented pane switcher + always-visible verdict line */}
       <div className="mobile-bar">
         <div className="segmented" role="tablist" aria-label="Workbench pane">
@@ -157,9 +207,11 @@ export function LabView(): React.ReactElement {
 
       {/* ── LEFT: strategy / risk / costs ────────────────────────────── */}
       <div className="col col-left">
-        <div className="panel">
-          <h2>Inputs <span className="right"><Badge>live · updates on every change</Badge></span></h2>
+        <div className="col-caption">
+          Inputs <Badge>live · every change recomputes</Badge>
+        </div>
 
+        <section className="lab-section">
           <details
             className="subsection"
             open={strategyOpen}
@@ -254,7 +306,9 @@ export function LabView(): React.ReactElement {
               )}
             </div>
           </details>
+        </section>
 
+        <section className="lab-section">
           <details
             className="subsection"
             open={riskOpen}
@@ -323,7 +377,9 @@ export function LabView(): React.ReactElement {
               )}
             </div>
           </details>
+        </section>
 
+        <section className="lab-section">
           <details
             className="subsection"
             open={costsOpen}
@@ -374,8 +430,11 @@ export function LabView(): React.ReactElement {
               </div>
             </div>
           </details>
-        </div>
+        </section>
       </div>
+
+      {/* drag handle between left column and centre */}
+      <div className="col-resizer" onMouseDown={startDrag('left')} role="separator" aria-label="Resize inputs column" />
 
       {/* ── CENTER: chart + equity ──────────────────────────────────── */}
       <div className="col col-center">
@@ -423,6 +482,10 @@ export function LabView(): React.ReactElement {
           </div>
         </div>
       </div>
+
+      {/* drag handle between centre and results — pull LEFT to widen results
+          and fit more reading cards per row */}
+      <div className="col-resizer" onMouseDown={startDrag('right')} role="separator" aria-label="Resize results column" />
 
       {/* ── RIGHT: live results ─────────────────────────────────────── */}
       <div className="col col-right">
