@@ -330,14 +330,32 @@ input[type='text'], input[type='number'], input[type='search'], select, textarea
   background: var(--bg-2);
   border: 1px solid var(--line);
   color: var(--text-primary);
-  padding: 6px 8px;
+  padding: 4px 8px;
   border-radius: 0;
   font-size: var(--fs-13);
   outline: none;
   transition: border-color 0.12s, background 0.12s;
   min-width: 0;
   width: 100%;
+  height: 28px;
+  box-sizing: border-box;
 }
+textarea { height: auto; padding-top: 6px; padding-bottom: 6px; }
+/* Chrome / Safari default select styling adds a few pixels of chrome, which
+   throws off row alignment. Draw our own caret so paired select+input rows
+   line up perfectly. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 22px;
+  background-repeat: no-repeat;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(-45deg, transparent 50%, currentColor 50%);
+  background-size: 5px 5px, 5px 5px;
+  background-position: right 10px center, right 6px center;
+}
+select::-ms-expand { display: none; }
 input[type='number'] { font-family: var(--mono); }
 input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
@@ -480,7 +498,7 @@ input:disabled, select:disabled { color: var(--text-disabled); }
 .reading { display: grid; grid-template-columns: 1fr; gap: 4px; }
 .reading .rangebar {
   position: relative;
-  height: 5px;
+  height: 4px;
   border-radius: 0;
   background: linear-gradient(
     to right,
@@ -491,16 +509,20 @@ input:disabled, select:disabled { color: var(--text-disabled); }
     var(--pos) 66%,
     var(--pos) 100%
   );
-  opacity: 0.7;
+  opacity: 0.55;
+  /* Read-only reading gauge, never a slider — kill any grab affordance. */
+  cursor: default;
+  pointer-events: none;
 }
 .reading .rangebar .marker {
   position: absolute;
-  top: -2px;
+  top: -3px;
   width: 2px;
-  height: 9px;
+  height: 10px;
   background: var(--text-primary);
   box-shadow: 0 0 0 1px var(--bg-1);
   transform: translateX(-1px);
+  border-radius: 0;
 }
 .reading .meaning {
   font-size: 11px;
@@ -669,11 +691,35 @@ tbody tr:hover td { background: var(--bg-2); }
 .headline-callout.neutral { border-left-color: var(--warn); background: var(--warn-soft); }
 .headline-callout.neutral .head { color: var(--warn); }
 
-/* Responsive: below 1100 px collapse right column beneath */
-@media (max-width: 1200px) {
-  .workbench { grid-template-columns: 280px 1fr; grid-template-rows: 1fr; }
-  .workbench > .col-right { grid-column: 1 / -1; grid-row: 2; }
-  .workbench { grid-template-rows: 1fr auto; }
+/* Responsive workbench
+   - Wide desktop: three columns as specified.
+   - 13" laptop / narrow desktop: right column drops beneath the chart, its own
+     scroll; the middle column keeps its two charts stacked but shorter.
+   - Tablet / small: the left column also drops beneath. Everything scrolls
+     inside its own column — the page itself never scrolls horizontally.
+   No overlap at any width. */
+@media (max-width: 1440px) {
+  .workbench { grid-template-columns: 300px 1fr 320px; }
+}
+@media (max-width: 1280px) {
+  .workbench {
+    grid-template-columns: 280px 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 260px);
+  }
+  .workbench > .col-right {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    border-top: 1px solid var(--line);
+  }
+}
+@media (max-width: 900px) {
+  .workbench {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(280px, 1fr) auto;
+  }
+  .workbench > .col-left  { grid-column: 1; grid-row: 1; max-height: 40vh; }
+  .workbench > .col-center { grid-column: 1; grid-row: 2; min-height: 280px; }
+  .workbench > .col-right { grid-column: 1; grid-row: 3; max-height: 60vh; }
 }
 
 /* ── gate chips (PROVER) ─────────────────────────────────────────── */
@@ -699,14 +745,152 @@ tbody tr:hover td { background: var(--bg-2); }
 .gate p { margin: 6px 0 4px; color: var(--text-secondary); font-size: 12px; }
 .gate .mono.small { color: var(--text-ghost); }
 
-/* ── spec editor ─────────────────────────────────────────────────── */
+/* ── spec editor ─────────────────────────────────────────────────
+   The compiler UI: identity, entry-mode params, exit geometry, rule
+   lists, filters. Every input group sits inside a .spec-block with a
+   uniform header + divider, and every input line uses .spec-grid so
+   labels can never overlap another row's field. */
 
-.spec-editor { display: flex; flex-direction: column; gap: var(--s-3); }
-.spec-editor .rule-row { align-items: center; flex-wrap: wrap; gap: 4px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
-.spec-editor .rule-row:last-child { border-bottom: none; }
-.spec-editor .check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
-.spec-editor .grow { flex: 1; }
-.spec-editor .field select, .spec-editor .field input { width: auto; }
+.spec-editor { display: flex; flex-direction: column; gap: 0; }
+.spec-block {
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+.spec-block:first-child { padding-top: 0; }
+.spec-block:last-child { border-bottom: none; padding-bottom: var(--s-2); }
+.spec-block.muted-block { color: var(--text-ghost); }
+.spec-block-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-ghost);
+  margin: 0 0 var(--s-2);
+}
+
+/* Consistent 2-column grid inside blocks; NAME can span both columns via .field-wide. */
+.spec-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--s-3);
+  row-gap: var(--s-2);
+  align-items: end;
+}
+.spec-grid .field { min-width: 0; }
+.spec-grid .field-wide { grid-column: 1 / -1; }
+@media (max-width: 1440px) {
+  .spec-grid { grid-template-columns: 1fr; }
+  .spec-grid .field-wide { grid-column: auto; }
+}
+
+/* Number + unit pair (STOP 1.5 [ATR ×]) stays on one line, matched heights. */
+.field-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 4px;
+}
+.field-inline > input,
+.field-inline > select {
+  width: 100%;
+  height: 28px;
+  min-height: 28px;
+  box-sizing: border-box;
+}
+
+/* Uniform field height so every row aligns visually. */
+.spec-editor input[type='number'],
+.spec-editor input[type='text'],
+.spec-editor select {
+  height: 28px;
+  box-sizing: border-box;
+}
+
+/* Session checkboxes — wrap cleanly, never collide. */
+.check-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  margin-top: 4px;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.check > input[type='checkbox'] { width: auto; height: auto; margin: 0; accent-color: var(--accent); }
+
+/* ── rule builder rows ──────────────────────────────────────────
+   Grid: [operand] [comparator] [operand] [remove]. The two operand
+   cells share width; the middle comparator sits centered; the remove
+   button is a compact icon that never fights the row.  */
+.rule-list { display: flex; flex-direction: column; gap: 4px; }
+.rule-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.rule-row:last-child { border-bottom: none; }
+
+.rule-cmp {
+  height: 28px;
+  min-width: 96px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+.rule-remove {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.operand-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+  min-width: 0;
+}
+.operand-picker:has(> .operand-value) { grid-template-columns: minmax(0, 1fr) auto; }
+.operand-kind {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+.operand-period, .operand-value {
+  width: 72px;
+  height: 28px;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  /* When the workbench collapses to a single column, rule rows would run out
+     of room; stack the two operands with the comparator between them. */
+  .rule-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'left   remove'
+      'cmp    cmp'
+      'right  right';
+  }
+  .rule-row > :nth-child(1) { grid-area: left; }
+  .rule-row > .rule-cmp     { grid-area: cmp; }
+  .rule-row > :nth-child(3) { grid-area: right; }
+  .rule-row > .rule-remove  { grid-area: remove; justify-self: end; }
+}
 
 /* ── scatter (LIBRARY) ───────────────────────────────────────────── */
 

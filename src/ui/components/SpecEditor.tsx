@@ -197,89 +197,124 @@ export function SpecEditor({ spec }: { spec: StrategySpec }): React.ReactElement
     }
   }
 
+  // Entry rules only make sense for MARKET / BREAKOUT_OCO modes. The hedge
+  // baseline (CADENCE) enters on a fixed schedule and has no rule input; the
+  // UI must not present a widget that does nothing.
+  const rulesApply = mode === 'MARKET' || mode === 'BREAKOUT_OCO'
+
   return (
     <div className="spec-editor">
-      <div className="row wrap" style={{ gap: 8 }}>
-        <label className="field grow">
-          <span>Name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label className="field">
-          <span>{STR.specDirection}</span>
-          <select value={direction} onChange={(e) => setDirection(e.target.value as StrategySpec['direction'])}>
-            <option value="both">both</option>
-            <option value="long">long</option>
-            <option value="short">short</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>{STR.specEntryMode}</span>
-          <select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
-            <option value="BREAKOUT_OCO">breakout (OCO stops)</option>
-            <option value="MARKET">market on rules</option>
-            <option value="CADENCE">cadence (baseline)</option>
-          </select>
-        </label>
+      {/* ── Identity + entry mode ───────────────────────────────── */}
+      <div className="spec-block">
+        <div className="spec-block-title">Identity</div>
+        <div className="spec-grid">
+          <label className="field field-wide">
+            <span>Name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>{STR.specDirection}</span>
+            <select value={direction} onChange={(e) => setDirection(e.target.value as StrategySpec['direction'])}>
+              <option value="both">both</option>
+              <option value="long">long</option>
+              <option value="short">short</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>{STR.specEntryMode}</span>
+            <select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
+              <option value="BREAKOUT_OCO">breakout (OCO stops)</option>
+              <option value="MARKET">market on rules</option>
+              <option value="CADENCE">cadence (baseline)</option>
+            </select>
+          </label>
+        </div>
       </div>
 
-      {mode === 'BREAKOUT_OCO' && (
-        <div className="row wrap" style={{ gap: 8 }}>
-          <NumField label="Lookback" value={lookback} onChange={setLookback} min={2} step={1} />
-          <NumField label="Buffer (ATR×)" value={buffer} onChange={setBuffer} min={0} step={0.05} />
-          <NumField label="Order expiry" value={expiry} onChange={setExpiry} min={1} step={1} />
+      {/* ── Entry-mode parameters ───────────────────────────────── */}
+      {(mode === 'BREAKOUT_OCO' || mode === 'CADENCE') && (
+        <div className="spec-block">
+          <div className="spec-block-title">Entry mode parameters</div>
+          <div className="spec-grid">
+            {mode === 'BREAKOUT_OCO' && (
+              <>
+                <NumField label="Lookback (bars)" value={lookback} onChange={setLookback} min={2} step={1} />
+                <NumField label="Buffer (ATR ×)" value={buffer} onChange={setBuffer} min={0} step={0.05} />
+                <NumField label="Order expiry (bars)" value={expiry} onChange={setExpiry} min={1} step={1} />
+              </>
+            )}
+            {mode === 'CADENCE' && (
+              <NumField label="Interval (bars)" value={interval} onChange={setInterval_} min={1} step={1} />
+            )}
+          </div>
         </div>
       )}
-      {mode === 'CADENCE' && (
-        <NumField label="Interval (bars)" value={interval} onChange={setInterval_} min={1} step={1} />
-      )}
 
-      <div className="row wrap" style={{ gap: 8 }}>
-        <label className="field">
-          <span>{STR.specStop}</span>
-          <div className="row" style={{ gap: 4 }}>
-            <input
-              type="number"
-              step={0.1}
-              min={0.05}
-              value={stopValue}
-              onChange={(e) => setStopValue(Number(e.target.value))}
-              style={{ width: 80 }}
-            />
-            <select value={stopUnit} onChange={(e) => setStopUnit(e.target.value as 'ATR' | 'PRICE')}>
-              <option value="ATR">ATR ×</option>
-              <option value="PRICE">price</option>
-            </select>
+      {/* ── Exit geometry: stop + target aligned, unit dropdowns inline ── */}
+      <div className="spec-block">
+        <div className="spec-block-title">Exit</div>
+        <div className="spec-grid">
+          <div className="field">
+            <span>{STR.specStop}</span>
+            <div className="field-inline">
+              <input
+                type="number"
+                step={0.1}
+                min={0.05}
+                value={stopValue}
+                onChange={(e) => setStopValue(Number(e.target.value))}
+              />
+              <select value={stopUnit} onChange={(e) => setStopUnit(e.target.value as 'ATR' | 'PRICE')}>
+                <option value="ATR">ATR ×</option>
+                <option value="PRICE">price</option>
+              </select>
+            </div>
           </div>
-        </label>
-        <label className="field">
-          <span>{STR.specTarget}</span>
-          <div className="row" style={{ gap: 4 }}>
-            <input
-              type="number"
-              step={0.1}
-              min={0}
-              value={targetValue}
-              onChange={(e) => setTargetValue(Number(e.target.value))}
-              style={{ width: 80 }}
-            />
-            <select value={targetUnit} onChange={(e) => setTargetUnit(e.target.value as 'R' | 'ATR' | 'PRICE')}>
-              <option value="R">R</option>
-              <option value="ATR">ATR ×</option>
-              <option value="PRICE">price</option>
-            </select>
+          <div className="field">
+            <span>{STR.specTarget}</span>
+            <div className="field-inline">
+              <input
+                type="number"
+                step={0.1}
+                min={0}
+                value={targetValue}
+                onChange={(e) => setTargetValue(Number(e.target.value))}
+              />
+              <select value={targetUnit} onChange={(e) => setTargetUnit(e.target.value as 'R' | 'ATR' | 'PRICE')}>
+                <option value="R">R</option>
+                <option value="ATR">ATR ×</option>
+                <option value="PRICE">price</option>
+              </select>
+            </div>
+            <span className="hint">0 = no target</span>
           </div>
-          <span className="hint">0 = no target</span>
-        </label>
-        <NumField label={STR.specTimeout} value={timeoutBars} onChange={setTimeoutBars} min={0} step={1} hint="0 = none" />
+          <NumField label={STR.specTimeout} value={timeoutBars} onChange={setTimeoutBars} min={0} step={1} hint="0 = none" />
+        </div>
       </div>
 
-      <RuleList title={STR.specRules} rows={entryRows} onChange={setEntryRows} />
-      <RuleList title={`${STR.specFilters} (numeric)`} rows={filterRows} onChange={setFilterRows} />
+      {/* ── Rules: only when the entry mode actually uses them ─── */}
+      {rulesApply ? (
+        <>
+          <RuleList title={STR.specRules} rows={entryRows} onChange={setEntryRows} />
+          <RuleList title={`${STR.specFilters} (numeric)`} rows={filterRows} onChange={setFilterRows} />
+        </>
+      ) : (
+        <div className="spec-block muted-block">
+          <div className="spec-block-title">Entry rules</div>
+          <p className="hint" style={{ margin: 0 }}>
+            The <b>cadence</b> entry mode fires on a fixed schedule (the hedge baseline). Rules and
+            numeric filters do not apply here — switch entry mode to <em>market on rules</em> or
+            <em> breakout</em> to compose them.
+          </p>
+        </div>
+      )}
 
-      <div className="row wrap" style={{ gap: 12 }}>
+      {/* ── Session + higher-timeframe filters ─────────────────── */}
+      <div className="spec-block">
+        <div className="spec-block-title">Filters</div>
         <div className="field">
           <span>{STR.specSessionFilter}</span>
-          <div className="row" style={{ gap: 8 }}>
+          <div className="check-group">
             {SESSIONS.map((sess) => (
               <label key={sess} className="check">
                 <input
@@ -291,14 +326,14 @@ export function SpecEditor({ spec }: { spec: StrategySpec }): React.ReactElement
                     )
                   }
                 />
-                {sess}
+                <span>{sess}</span>
               </label>
             ))}
           </div>
         </div>
-        <label className="check">
+        <label className="check" style={{ marginTop: 8 }}>
           <input type="checkbox" checked={htf} onChange={(e) => setHtf(e.target.checked)} />
-          {STR.specHtfFilter}
+          <span>{STR.specHtfFilter}</span>
         </label>
       </div>
 
@@ -358,26 +393,41 @@ function RuleList({
     onChange(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)))
   }
   return (
-    <div className="field">
-      <span>{title}</span>
-      {rows.map((r, i) => (
-        <div className="row rule-row" key={i} style={{ gap: 6 }}>
-          <OperandPicker value={r.left} onChange={(left) => update(i, { left })} />
-          <select value={r.cmp} onChange={(e) => update(i, { cmp: e.target.value as Comparator })}>
-            {COMPARATORS.map((c) => (
-              <option key={c.v} value={c.v}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-          <OperandPicker value={r.right} onChange={(right) => update(i, { right })} />
-          <button className="btn small danger" onClick={() => onChange(rows.filter((_, k) => k !== i))}>
-            {STR.specRemove}
-          </button>
-        </div>
-      ))}
+    <div className="spec-block">
+      <div className="spec-block-title">{title}</div>
+      {rows.length === 0 && (
+        <p className="hint" style={{ margin: '4px 0 8px' }}>None yet — add one below.</p>
+      )}
+      <div className="rule-list">
+        {rows.map((r, i) => (
+          <div className="rule-row" key={i}>
+            <OperandPicker value={r.left} onChange={(left) => update(i, { left })} />
+            <select
+              className="rule-cmp"
+              value={r.cmp}
+              onChange={(e) => update(i, { cmp: e.target.value as Comparator })}
+            >
+              {COMPARATORS.map((c) => (
+                <option key={c.v} value={c.v}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <OperandPicker value={r.right} onChange={(right) => update(i, { right })} />
+            <button
+              className="btn small danger rule-remove"
+              onClick={() => onChange(rows.filter((_, k) => k !== i))}
+              aria-label={`Remove rule ${i + 1}`}
+              title="Remove"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
       <button
         className="btn small"
+        style={{ marginTop: 8 }}
         onClick={() =>
           onChange([
             ...rows,
@@ -404,8 +454,12 @@ function OperandPicker({
 }): React.ReactElement {
   const def = OPERAND_KINDS.find((k) => k.v === value.kind)!
   return (
-    <span className="row" style={{ gap: 4 }}>
-      <select value={value.kind} onChange={(e) => onChange({ ...value, kind: e.target.value as OperandKind })}>
+    <span className="operand-picker">
+      <select
+        className="operand-kind"
+        value={value.kind}
+        onChange={(e) => onChange({ ...value, kind: e.target.value as OperandKind })}
+      >
         {OPERAND_KINDS.map((k) => (
           <option key={k.v} value={k.v}>
             {k.label}
@@ -419,7 +473,7 @@ function OperandPicker({
           step={1}
           value={value.period}
           onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
-          style={{ width: 64 }}
+          className="operand-period"
           title="period"
         />
       )}
@@ -429,7 +483,7 @@ function OperandPicker({
           step={0.05}
           value={value.value}
           onChange={(e) => onChange({ ...value, value: Number(e.target.value) })}
-          style={{ width: 80 }}
+          className="operand-value"
           title="value"
         />
       )}
@@ -461,7 +515,6 @@ function NumField({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        style={{ width: 100 }}
       />
       {hint && <span className="hint">{hint}</span>}
     </label>

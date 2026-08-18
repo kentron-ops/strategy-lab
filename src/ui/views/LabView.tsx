@@ -18,6 +18,7 @@ import { EquityChart } from '../components/EquityChart'
 import { CandleChart } from '../components/CandleChart'
 import { SpecEditor } from '../components/SpecEditor'
 import { STR } from '../strings'
+import { useCollapsed } from '../hooks/useCollapsed'
 import { PRESET_SPECS } from '../../core/spec/presets'
 import type { StrategySpec } from '../../core/spec/types'
 import type { IntrabarPolicy, ParamSpec } from '../../core/types'
@@ -42,6 +43,11 @@ export function LabView(): React.ReactElement {
   const activeSpec = s.strategyConfig.spec as StrategySpec | undefined
   const dataset = s.activeDataset()
   const [saveName, setSaveName] = useState('')
+
+  // Collapsed state per input group persists across sessions.
+  const [strategyOpen, setStrategyOpen] = useCollapsed('strategy', true)
+  const [riskOpen, setRiskOpen] = useCollapsed('risk', true)
+  const [costsOpen, setCostsOpen] = useCollapsed('costs', true)
 
   const pickStrategy = (value: string): void => {
     if (value.startsWith('preset:')) {
@@ -111,7 +117,11 @@ export function LabView(): React.ReactElement {
         <div className="panel">
           <h2>Inputs <span className="right"><Badge>live · updates on every change</Badge></span></h2>
 
-          <details className="subsection" open>
+          <details
+            className="subsection"
+            open={strategyOpen}
+            onToggle={(e) => setStrategyOpen((e.target as HTMLDetailsElement).open)}
+          >
             <summary>Strategy</summary>
             <div className="body">
               <div className="field">
@@ -200,7 +210,11 @@ export function LabView(): React.ReactElement {
             </div>
           </details>
 
-          <details className="subsection" open>
+          <details
+            className="subsection"
+            open={riskOpen}
+            onToggle={(e) => setRiskOpen((e.target as HTMLDetailsElement).open)}
+          >
             <summary>Risk</summary>
             <div className="body">
               <div className="grid-2">
@@ -265,7 +279,11 @@ export function LabView(): React.ReactElement {
             </div>
           </details>
 
-          <details className="subsection" open>
+          <details
+            className="subsection"
+            open={costsOpen}
+            onToggle={(e) => setCostsOpen((e.target as HTMLDetailsElement).open)}
+          >
             <summary>Costs &amp; execution</summary>
             <div className="body">
               <div className="grid-2">
