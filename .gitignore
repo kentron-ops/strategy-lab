@@ -12,3 +12,4 @@ coverage/
 *.log
 *.tsbuildinfo
 scripts/differential/out/
+.git-msg.tmp
