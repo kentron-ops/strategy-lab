@@ -198,6 +198,78 @@ export const reading = {
   },
 }
 
+/**
+ * Slider + number merged control for INPUT parameters (causes).
+ *
+ * Renders only when both min and max are known — a slider with an unbounded
+ * range is a lie. Both widgets edit the same value; edits are clamped to
+ * [min, max] and snapped to step. Results recompute live through the store's
+ * existing debounce, so dragging feels continuous.
+ *
+ * Result gauges intentionally do NOT use this control — outputs stay
+ * read-only ticks. Causes get sliders; effects get readings.
+ */
+export function SliderNumber({
+  label,
+  value,
+  min,
+  max,
+  step,
+  help,
+  onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  step: number
+  help: string
+  onChange: (v: number) => void
+}): React.ReactElement {
+  const clamp = (x: number): number => {
+    if (!Number.isFinite(x)) return value
+    let v = Math.min(max, Math.max(min, x))
+    if (step > 0) v = Math.round((v - min) / step) * step + min
+    // kill float dust from the step arithmetic
+    const decimals = step >= 1 ? 0 : Math.min(6, String(step).split('.')[1]?.length ?? 2)
+    return Number(v.toFixed(decimals))
+  }
+  return (
+    <div className="field slider-field">
+      <label>
+        <Tip text={help}>{label}</Tip>
+      </label>
+      <div className="slider-pair">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={Number.isFinite(value) ? value : min}
+          onChange={(e) => onChange(clamp(Number(e.target.value)))}
+          aria-label={`${label} slider`}
+        />
+        <input
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => {
+            const v = Number(e.target.value)
+            if (Number.isFinite(v)) onChange(clamp(v))
+          }}
+          aria-label={`${label} value`}
+        />
+      </div>
+      <div className="slider-bounds">
+        <span>{min}</span>
+        <span>{max}</span>
+      </div>
+    </div>
+  )
+}
+
 export function CiText({ ci, pct = false, digits = 3 }: { ci: ConfidenceInterval; pct?: boolean; digits?: number }): string {
   const f = (x: number): string => {
     if (!Number.isFinite(x)) return x > 0 ? '+∞' : '−∞'

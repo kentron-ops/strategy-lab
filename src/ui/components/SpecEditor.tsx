@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { useLab } from '../../state/store'
 import { STR } from '../strings'
-import { Badge, Callout, downloadText, readFileAsText } from './bits'
+import { Badge, Callout, SliderNumber, downloadText, readFileAsText } from './bits'
 import type {
   Comparator,
   Condition,
@@ -238,13 +238,21 @@ export function SpecEditor({ spec }: { spec: StrategySpec }): React.ReactElement
           <div className="spec-grid">
             {mode === 'BREAKOUT_OCO' && (
               <>
-                <NumField label="Lookback (bars)" value={lookback} onChange={setLookback} min={2} step={1} />
-                <NumField label="Buffer (ATR ×)" value={buffer} onChange={setBuffer} min={0} step={0.05} />
-                <NumField label="Order expiry (bars)" value={expiry} onChange={setExpiry} min={1} step={1} />
+                <SliderNumber label="Lookback (bars)" value={lookback} onChange={setLookback}
+                  min={2} max={200} step={1}
+                  help="Completed bars defining the breakout range. The forming bar is always excluded." />
+                <SliderNumber label="Buffer (ATR ×)" value={buffer} onChange={setBuffer}
+                  min={0} max={3} step={0.05}
+                  help="Distance beyond the range edge for the entry stop orders." />
+                <SliderNumber label="Order expiry (bars)" value={expiry} onChange={setExpiry}
+                  min={1} max={100} step={1}
+                  help="Cancel untriggered entries after this many bars." />
               </>
             )}
             {mode === 'CADENCE' && (
-              <NumField label="Interval (bars)" value={interval} onChange={setInterval_} min={1} step={1} />
+              <SliderNumber label="Interval (bars)" value={interval} onChange={setInterval_}
+                min={1} max={500} step={1}
+                help="Bars between cadence entries — the hedge baseline's only knob." />
             )}
           </div>
         </div>
@@ -288,7 +296,9 @@ export function SpecEditor({ spec }: { spec: StrategySpec }): React.ReactElement
             </div>
             <span className="hint">0 = no target</span>
           </div>
-          <NumField label={STR.specTimeout} value={timeoutBars} onChange={setTimeoutBars} min={0} step={1} hint="0 = none" />
+          <SliderNumber label={STR.specTimeout} value={timeoutBars} onChange={setTimeoutBars}
+            min={0} max={500} step={1}
+            help="Close the position after this many bars regardless of price. 0 disables the timeout." />
         </div>
       </div>
 

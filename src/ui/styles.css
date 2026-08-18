@@ -269,22 +269,26 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-1);
-  padding: var(--s-3) var(--s-4);
+  padding: var(--s-4);
   margin-bottom: var(--s-3);
 }
 .panel h2 {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  margin: 0 0 var(--s-3);
+  margin: calc(-1 * var(--s-4)) calc(-1 * var(--s-4)) var(--s-4);
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-secondary);
+  min-height: 36px;
 }
-.panel h2 .right { margin-left: auto; }
+.panel h2 .right { margin-left: auto; display: flex; gap: var(--s-2); align-items: center; }
 
 /* Collapsible sub-section */
 .subsection { border-top: 1px solid var(--line); padding-top: var(--s-3); margin-top: var(--s-3); }
@@ -663,6 +667,10 @@ tbody tr:hover td { background: var(--bg-2); }
   display: flex;
   flex-direction: column;
 }
+.workbench .col-center > .panel > h2 {
+  margin: calc(-1 * var(--s-3)) calc(-1 * var(--s-3)) var(--s-3);
+  padding: var(--s-2) var(--s-3);
+}
 .workbench .col-center > .panel > .chart-wrap {
   flex: 1;
   min-height: 0;
@@ -691,35 +699,184 @@ tbody tr:hover td { background: var(--bg-2); }
 .headline-callout.neutral { border-left-color: var(--warn); background: var(--warn-soft); }
 .headline-callout.neutral .head { color: var(--warn); }
 
-/* Responsive workbench
-   - Wide desktop: three columns as specified.
-   - 13" laptop / narrow desktop: right column drops beneath the chart, its own
-     scroll; the middle column keeps its two charts stacked but shorter.
-   - Tablet / small: the left column also drops beneath. Everything scrolls
-     inside its own column — the page itself never scrolls horizontally.
-   No overlap at any width. */
+/* ── slider + number merged control (INPUT causes only) ─────────────── */
+
+.slider-field { min-width: 0; }
+.slider-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: var(--s-2);
+  align-items: center;
+}
+.slider-pair input[type='number'] { height: 28px; }
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 28px;             /* full hit target, thumb-friendly on phones */
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--line-strong);
+  border-radius: 0;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  background: var(--accent);
+  border: 2px solid var(--bg-1);
+  border-radius: 50%;
+  transition: transform 0.1s;
+}
+input[type='range']::-webkit-slider-thumb:hover { transform: scale(1.25); }
+input[type='range']::-moz-range-track {
+  height: 3px;
+  background: var(--line-strong);
+}
+input[type='range']::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  border: 2px solid var(--bg-1);
+  border-radius: 50%;
+}
+input[type='range']:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+.slider-bounds {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-ghost);
+  margin-top: 2px;
+  /* bounds only span the slider, not the number box */
+  width: calc(100% - 72px - var(--s-2));
+}
+
+.param-list { display: flex; flex-direction: column; gap: var(--s-3); }
+
+/* FIND BEST */
+.find-best {
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* ── mobile bar: segmented switcher + sticky verdict ────────────────── */
+
+.mobile-bar { display: none; }
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  border: 1px solid var(--line-strong);
+}
+.segmented button {
+  background: var(--bg-1);
+  border: none;
+  border-right: 1px solid var(--line-strong);
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 8px 0;
+  cursor: pointer;
+}
+.segmented button:last-child { border-right: none; }
+.segmented button.active { background: var(--accent); color: #fff; }
+
+.sticky-summary {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 6px var(--s-3);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-top: none;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.sticky-summary.pos { color: var(--pos); border-left: 3px solid var(--pos); }
+.sticky-summary.neg { color: var(--neg); border-left: 3px solid var(--neg); }
+
+.drawer-toggle { display: none; }
+
+/* ── responsive workbench ───────────────────────────────────────────
+   ≥1280px  three columns.
+   900–1280 two columns; RESULTS becomes a right drawer with a toggle.
+   <900     single column, segmented [Inputs|Chart|Results] + sticky
+            verdict always visible. No horizontal page scroll anywhere. */
+
 @media (max-width: 1440px) {
   .workbench { grid-template-columns: 300px 1fr 320px; }
 }
-@media (max-width: 1280px) {
-  .workbench {
-    grid-template-columns: 280px 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 260px);
-  }
+
+@media (max-width: 1280px) and (min-width: 900px) {
+  .workbench { grid-template-columns: 300px 1fr; }
   .workbench > .col-right {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    border-top: 1px solid var(--line);
+    position: fixed;
+    top: var(--header-h);
+    right: 0;
+    bottom: var(--footer-h);
+    width: min(400px, 90vw);
+    background: var(--bg-0);
+    border-left: 1px solid var(--line-strong);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+    transform: translateX(100%);
+    transition: transform 0.2s ease;
+    z-index: 40;
+    overflow-y: auto;
   }
+  .workbench.drawer-open > .col-right { transform: translateX(0); }
+  .drawer-toggle {
+    display: block;
+    position: fixed;
+    right: 0;
+    top: calc(var(--header-h) + var(--s-4));
+    z-index: 41;
+    border-right: none;
+  }
+  .workbench.drawer-open .drawer-toggle { right: min(400px, 90vw); }
 }
+
 @media (max-width: 900px) {
   .workbench {
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(280px, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr);
   }
-  .workbench > .col-left  { grid-column: 1; grid-row: 1; max-height: 40vh; }
-  .workbench > .col-center { grid-column: 1; grid-row: 2; min-height: 280px; }
-  .workbench > .col-right { grid-column: 1; grid-row: 3; max-height: 60vh; }
+  .mobile-bar {
+    display: block;
+    grid-row: 1;
+    background: var(--bg-0);
+    padding: var(--s-2) var(--s-2) 0;
+  }
+  /* one pane at a time — the others stay mounted but hidden */
+  .workbench > .col { grid-row: 2; grid-column: 1; display: none; }
+  .workbench.pane-inputs  > .col-left   { display: block; }
+  .workbench.pane-chart   > .col-center { display: grid; }
+  .workbench.pane-results > .col-right  { display: block; }
+  /* charts need real height on a phone */
+  .workbench > .col-center { grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); }
+  /* thumb-sized touch targets */
+  .btn { padding: 8px 14px; }
+  .subsection > summary { padding: var(--s-2) 0; }
 }
 
 /* ── gate chips (PROVER) ─────────────────────────────────────────── */

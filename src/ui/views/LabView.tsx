@@ -7,6 +7,7 @@ import {
   Callout,
   CiText,
   Metric,
+  SliderNumber,
   Tip,
   fmtMoney,
   fmtNum,
@@ -14,6 +15,8 @@ import {
   reading,
   toneOf,
 } from '../components/bits'
+import { defaultSweepFor } from '../../core/optimization/sweep'
+import { rankRows } from '../../core/optimization/scoring'
 import { EquityChart } from '../components/EquityChart'
 import { CandleChart } from '../components/CandleChart'
 import { SpecEditor } from '../components/SpecEditor'
@@ -48,6 +51,10 @@ export function LabView(): React.ReactElement {
   const [strategyOpen, setStrategyOpen] = useCollapsed('strategy', true)
   const [riskOpen, setRiskOpen] = useCollapsed('risk', true)
   const [costsOpen, setCostsOpen] = useCollapsed('costs', true)
+
+  // Responsive: phone/tablet segmented pane; mid-width results drawer.
+  const [pane, setPane] = useState<'inputs' | 'chart' | 'results'>('chart')
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   const pickStrategy = (value: string): void => {
     if (value.startsWith('preset:')) {
@@ -110,8 +117,44 @@ export function LabView(): React.ReactElement {
     }
   }, [m, inadequate, result])
 
+  const summaryLine = headline
+    ? `${headline.head}${m ? ` · ${fmtNum(m.expectancyR.point, 3)}R · ${m.trades} trades` : ''}`
+    : 'computing…'
+
   return (
-    <div className="workbench">
+    <div className={`workbench pane-${pane}${drawerOpen ? ' drawer-open' : ''}`}>
+      {/* Phone/tablet: segmented pane switcher + always-visible verdict line */}
+      <div className="mobile-bar">
+        <div className="segmented" role="tablist" aria-label="Workbench pane">
+          {(['inputs', 'chart', 'results'] as const).map((p) => (
+            <button
+              key={p}
+              role="tab"
+              aria-selected={pane === p}
+              className={pane === p ? 'active' : ''}
+              onClick={() => setPane(p)}
+            >
+              {p === 'inputs' ? 'Inputs' : p === 'chart' ? 'Chart' : 'Results'}
+            </button>
+          ))}
+        </div>
+        <div
+          className={`sticky-summary ${headline?.kind === 'pos' ? 'pos' : headline?.kind === 'neg' ? 'neg' : ''}`}
+          onClick={() => setPane('results')}
+        >
+          {summaryLine}
+        </div>
+      </div>
+
+      {/* Mid-width: results live in a drawer; this toggle floats at the edge */}
+      <button
+        className="drawer-toggle btn"
+        onClick={() => setDrawerOpen(!drawerOpen)}
+        aria-expanded={drawerOpen}
+      >
+        {drawerOpen ? 'CLOSE ✕' : '◂ RESULTS'}
+      </button>
+
       {/* ── LEFT: strategy / risk / costs ────────────────────────────── */}
       <div className="col col-left">
         <div className="panel">
@@ -161,12 +204,14 @@ export function LabView(): React.ReactElement {
                   spec={activeSpec}
                 />
               ) : (
-                <div className="grid-2" style={{ marginTop: 8 }}>
+                <div className="param-list" style={{ marginTop: 8 }}>
                   {strategy.paramSpec.map((p) => (
                     <ParamField key={p.key} spec={p} />
                   ))}
                 </div>
               )}
+
+              <FindBest />
 
               <div className="row wrap" style={{ marginTop: 12, gap: 8 }}>
                 <div className="field grow">
@@ -226,7 +271,7 @@ export function LabView(): React.ReactElement {
                   help="The account the simulation starts with."
                   onChange={(v) => s.setRisk({ startingEquity: v })}
                 />
-                <NumField
+                <SliderNumber
                   label="Risk % per trade"
                   value={s.risk.riskPercent}
                   min={0.05}
@@ -251,7 +296,7 @@ export function LabView(): React.ReactElement {
                     <option value="FRACTIONAL_KELLY">Fractional Kelly (high variance)</option>
                   </select>
                 </div>
-                <NumField
+                <SliderNumber
                   label="Equity floor %"
                   value={s.risk.equityFloorPercent ?? 0}
                   min={0}
@@ -260,7 +305,7 @@ export function LabView(): React.ReactElement {
                   help="Kill switch: trading halts if equity touches this % of start. 0 disables — not recommended."
                   onChange={(v) => s.setRisk({ equityFloorPercent: v > 0 ? v : null })}
                 />
-                <NumField
+                <SliderNumber
                   label="Max concurrent positions"
                   value={s.risk.maxConcurrentPositions}
                   min={1}
@@ -678,6 +723,21 @@ function ParamField({ spec }: { spec: ParamSpec }): React.ReactElement {
       </div>
     )
   }
+  // Numeric: metadata-driven. Slider only when the strategy declares BOTH
+  // bounds — an unbounded slider would be an invented range.
+  if (spec.min !== undefined && spec.max !== undefined) {
+    return (
+      <SliderNumber
+        label={spec.label}
+        help={spec.help}
+        value={typeof value === 'number' ? value : spec.min}
+        min={spec.min}
+        max={spec.max}
+        step={spec.step ?? 0.1}
+        onChange={(v) => s.setParam(spec.key, v)}
+      />
+    )
+  }
   return (
     <NumField
       label={spec.label}
@@ -726,6 +786,151 @@ function NumField({
       />
     </div>
   )
+}
+
+/**
+ * FIND BEST — a bounded sweep on the REAL engine, scored by the stability
+ * objective (CI lower bound × sample weight × drawdown penalty — risk-adjusted
+ * EV that a thin sample cannot game), with the multiple-testing count reported
+ * and added to the trials ledger that the Prover's penalty reads.
+ *
+ * It never invents numbers: every row is a full backtest, and the verdict
+ * states plainly when NO setting turns the edge positive.
+ */
+function FindBest(): React.ReactElement {
+  const s = useLab()
+  const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const [report, setReport] = useState<{
+    tried: number
+    applied: Record<string, number | string | boolean> | null
+    expectancyR: number
+    ciLow: number
+    ciHigh: number
+    trades: number
+    verdict: 'POSITIVE' | 'NONE_POSITIVE' | 'THIN'
+    keys: string[]
+  } | null>(null)
+
+  const run = async (): Promise<void> => {
+    const dataset = s.activeDataset()
+    if (!dataset) return
+    setBusy(true)
+    setReport(null)
+    try {
+      const resolvedId = resolveStrategyConfig(s.strategyConfig).strategyId
+      // Bound the sweep: at most 3 sweepable dimensions, each thinned to ≤6
+      // values, so FIND BEST stays interactive (≤216 backtests) instead of
+      // silently launching thousands.
+      const dims = defaultSweepFor(resolvedId)
+        .slice(0, 3)
+        .map((d) => ({
+          key: d.key,
+          values: thin(d.values, 6),
+        }))
+      if (!dims.length) {
+        setBusy(false)
+        return
+      }
+      const result = await compute.sweep(
+        dataset,
+        s.backtestConfig(),
+        { dimensions: dims, maxCombinations: 400 },
+        (p) => setProgress({ done: p.done, total: p.total }),
+      )
+      // Every combination evaluated is a trial the Prover must know about.
+      s.addTrials(s.currentFamilyKey(), result.rows.length)
+
+      const ranked = rankRows(result.rows, 'stability')
+      const best = ranked[0]
+      if (!best || best.metrics.trades === 0) {
+        setReport({
+          tried: result.rows.length,
+          applied: null,
+          expectancyR: 0,
+          ciLow: 0,
+          ciHigh: 0,
+          trades: 0,
+          verdict: 'NONE_POSITIVE',
+          keys: dims.map((d) => d.key),
+        })
+        return
+      }
+
+      // Apply the winner to the live config — the sliders move to it and the
+      // reactive graph recomputes from the same engine that scored it.
+      for (const [k, v] of Object.entries(best.params)) s.setParam(k, v)
+
+      const m = best.metrics
+      setReport({
+        tried: result.rows.length,
+        applied: best.params,
+        expectancyR: m.expectancyR.point,
+        ciLow: m.expectancyR.low,
+        ciHigh: m.expectancyR.high,
+        trades: m.trades,
+        verdict:
+          m.trades < m.sampleThreshold ? 'THIN' : m.expectancyR.low > 0 ? 'POSITIVE' : 'NONE_POSITIVE',
+        keys: dims.map((d) => d.key),
+      })
+    } finally {
+      setBusy(false)
+      setProgress(null)
+    }
+  }
+
+  return (
+    <div className="find-best">
+      <button className="btn primary" disabled={busy} onClick={() => void run()}>
+        {busy && progress
+          ? `Sweeping ${progress.done}/${progress.total}…`
+          : busy
+            ? 'Sweeping…'
+            : 'FIND BEST'}
+      </button>
+      <span className="hint">
+        Bounded sweep on the real engine over up to 3 parameters, scored by
+        risk-adjusted EV with a sample penalty. Every configuration tried is
+        counted against you in the Prover.
+      </span>
+      {report && (
+        <Callout
+          kind={report.verdict === 'POSITIVE' ? 'ok' : report.verdict === 'THIN' ? 'warn' : 'error'}
+        >
+          <b>
+            {report.verdict === 'POSITIVE'
+              ? 'Best setting has a measured positive edge on this data'
+              : report.verdict === 'THIN'
+                ? 'Best setting found — but the sample is thin'
+                : report.applied
+                  ? 'No setting turns the edge positive'
+                  : 'No configuration produced a single trade'}
+          </b>
+          {report.applied && (
+            <div className="small" style={{ marginTop: 4 }}>
+              Applied {Object.entries(report.applied).map(([k, v]) => `${k}=${v}`).join(' · ')} —
+              expectancy {fmtNum(report.expectancyR, 3)}R (CI {fmtNum(report.ciLow, 3)} …{' '}
+              {fmtNum(report.ciHigh, 3)}, n={report.trades}
+              {report.verdict === 'THIN' ? ' — sample thin, treat as a hint' : ''}).
+            </div>
+          )}
+          <div className="small muted" style={{ marginTop: 4 }}>
+            {report.tried} configurations tried in this sweep (over {report.keys.join(', ')});
+            total trials against this strategy now {s.currentTrials().toLocaleString()}. The more
+            you search, the stronger a result must be before PROVER will believe it.
+          </div>
+        </Callout>
+      )}
+    </div>
+  )
+}
+
+function thin(values: (number | string | boolean)[], maxCount: number): (number | string | boolean)[] {
+  if (values.length <= maxCount) return values
+  const stride = (values.length - 1) / (maxCount - 1)
+  const out: (number | string | boolean)[] = []
+  for (let i = 0; i < maxCount; i++) out.push(values[Math.round(i * stride)])
+  return [...new Set(out)]
 }
 
 /**
