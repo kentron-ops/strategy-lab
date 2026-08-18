@@ -14,9 +14,18 @@ import { fnv1a, stableStringify } from '../util/hash'
  * Property-based tests (V2 §6): thousands of randomized inputs asserting the
  * invariants that golden fixtures alone cannot cover. If any of these can be
  * falsified, the engine is lying somewhere.
+ *
+ * Every fc.assert call passes an explicit `seed`, so a passing run on a
+ * developer laptop and a passing run on GitHub Actions exercise the exact
+ * same generated inputs. Without this, CI and local hit different corner
+ * cases and results are not reproducible. The seed itself is arbitrary but
+ * fixed; if the engine is ever changed and a real bug shows up under a
+ * specific seed, that seed can be pinned here as a regression case.
  */
 
-// ── generators ────────────────────────────────────────────────────────────────
+const SEED = 20260818
+
+// ── generators ──────────────────────────────────────────────────────────────
 
 /** A random but VALID candle series (validators would pass it). */
 const candleSeriesArb = (minLen: number, maxLen: number) =>
@@ -56,7 +65,7 @@ const candleSeriesArb = (minLen: number, maxLen: number) =>
 
 const r4 = (x: number): number => Math.round(x * 10000) / 10000
 
-// ── conservation of money ─────────────────────────────────────────────────────
+// ── conservation of money ────────────────────────────────────────────────────
 
 describe('property: conservation of P&L', () => {
   it('ledger sum equals equity change on random data, any strategy, any policy', () => {
@@ -94,12 +103,12 @@ describe('property: conservation of P&L', () => {
           }
         },
       ),
-      { numRuns: 25 },
+      { numRuns: 25, seed: SEED },
     )
   })
 })
 
-// ── sizing never exceeds the configured risk ──────────────────────────────────
+// ── sizing never exceeds the configured risk ─────────────────────────────────
 
 describe('property: sizing never risks more than configured', () => {
   it('holds for random equity, prices and stops', () => {
@@ -127,12 +136,12 @@ describe('property: sizing never risks more than configured', () => {
           }
         },
       ),
-      { numRuns: 500 },
+      { numRuns: 500, seed: SEED },
     )
   })
 })
 
-// ── intrabar policy ordering ──────────────────────────────────────────────────
+// ── intrabar policy ordering ─────────────────────────────────────────────────
 
 describe('property: CONSERVATIVE is never better than OPTIMISTIC on the same bar', () => {
   it('for any ambiguous bar, conservative resolves to the stop and optimistic to the target', () => {
@@ -161,7 +170,7 @@ describe('property: CONSERVATIVE is never better than OPTIMISTIC on the same bar
           }
         },
       ),
-      { numRuns: 300 },
+      { numRuns: 300, seed: SEED },
     )
   })
 
@@ -188,12 +197,12 @@ describe('property: CONSERVATIVE is never better than OPTIMISTIC on the same bar
           )
         }
       }),
-      { numRuns: 20 },
+      { numRuns: 20, seed: SEED },
     )
   })
 })
 
-// ── metrics on random ledgers ─────────────────────────────────────────────────
+// ── metrics on random ledgers ────────────────────────────────────────────────
 
 describe('property: metrics never produce NaN and respect identities', () => {
   it('for any random trade ledger', () => {
@@ -226,12 +235,12 @@ describe('property: metrics never produce NaN and respect identities', () => {
           }
         },
       ),
-      { numRuns: 200 },
+      { numRuns: 200, seed: SEED },
     )
   })
 })
 
-// ── validators accept what the generator builds ───────────────────────────────
+// ── validators accept what the generator builds ──────────────────────────────
 
 describe('property: generated candles are always valid, and hashing is stable', () => {
   it('validator passes and hash is order-of-keys independent', () => {
@@ -244,12 +253,12 @@ describe('property: generated candles are always valid, and hashing is stable', 
         const b = { z: [1, 2], y: { a: 3, b: 2 }, x: 1 }
         expect(fnv1a(stableStringify(a))).toBe(fnv1a(stableStringify(b)))
       }),
-      { numRuns: 50 },
+      { numRuns: 50, seed: SEED },
     )
   })
 })
 
-// ── determinism ───────────────────────────────────────────────────────────────
+// ── determinism ──────────────────────────────────────────────────────────────
 
 describe('property: the engine is a pure function of its inputs', () => {
   it('same inputs give byte-identical results on random data', () => {
@@ -262,7 +271,7 @@ describe('property: the engine is a pure function of its inputs', () => {
         expect(JSON.stringify(b.trades)).toBe(JSON.stringify(a.trades))
         expect(JSON.stringify(b.metrics)).toBe(JSON.stringify(a.metrics))
       }),
-      { numRuns: 10 },
+      { numRuns: 10, seed: SEED },
     )
   })
 })
