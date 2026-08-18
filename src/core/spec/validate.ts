@@ -64,8 +64,12 @@ export function validateSpec(spec: StrategySpec): SpecIssue[] {
       err('exit.stop.atrPeriod', 'ATR period must be at least 1.')
     }
   }
-  if (spec.exit?.target && !(spec.exit.target.value > 0)) {
-    err('exit.target.value', 'Target must be positive, or null for no target.')
+  if (spec.exit?.target) {
+    if (spec.exit.target.unit === 'INDICATOR') {
+      checkOperand(spec.exit.target.operand, 'exit.target.operand', issues)
+    } else if (!(spec.exit.target.value > 0)) {
+      err('exit.target.value', 'Target must be positive, or null for no target.')
+    }
   }
   if (!spec.exit?.target && !spec.exit?.timeoutBars) {
     warn(
@@ -144,6 +148,23 @@ function checkOperand(o: Operand, path: string, issues: SpecIssue[]): void {
     case 'value':
       if (!Number.isFinite(o.value)) {
         issues.push({ path, severity: 'ERROR', message: 'Constant is not a finite number.' })
+      }
+      break
+    case 'cci':
+    case 'mfi':
+      if (!(Number.isFinite(o.period) && o.period >= 2 && o.period <= 5000)) {
+        issues.push({ path, severity: 'ERROR', message: `Period must be 2–5000, got ${o.period}.` })
+      }
+      break
+    case 'bollinger':
+      if (!(Number.isFinite(o.period) && o.period >= 2 && o.period <= 5000)) {
+        issues.push({ path, severity: 'ERROR', message: `Bollinger period must be 2–5000, got ${o.period}.` })
+      }
+      if (!(Number.isFinite(o.stdDevs) && o.stdDevs > 0 && o.stdDevs <= 10)) {
+        issues.push({ path, severity: 'ERROR', message: `Bollinger stdDevs must be between 0 and 10, got ${o.stdDevs}.` })
+      }
+      if (!['upper', 'middle', 'lower'].includes(o.band)) {
+        issues.push({ path, severity: 'ERROR', message: `Unknown Bollinger band "${o.band}".` })
       }
       break
     case 'atrOffset':

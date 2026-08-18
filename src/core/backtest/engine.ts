@@ -341,15 +341,48 @@ export function runBacktest(
         continue
       }
 
-      const actualR = Math.abs(entryFill - o.stopLoss)
-      if (actualR <= 0) {
-        // Slippage carried the fill past its own stop. There is no trade here,
-        // only an instant loss with no defined risk — refuse it.
+      // ── protective levels must still be on the correct side of the ACTUAL
+      // fill, not merely a non-zero distance from it.
+      //
+      // Orders are priced from the signal bar's close, but they fill at the
+      // next bar's open. A gap across that boundary can leave a long's stop
+      // ABOVE its fill — at which point the "stop loss" would exit for a
+      // PROFIT the moment the bar is resolved, manufacturing free money out
+      // of a gap and booking it as a loss-limiting exit. The mirror case puts
+      // a "take profit" on the losing side.
+      //
+      // A real broker rejects an order whose protective level is already
+      // through the market. So does this engine, and it says so by name.
+      const stopOnWrongSide =
+        o.side === 'LONG' ? o.stopLoss >= entryFill : o.stopLoss <= entryFill
+      if (stopOnWrongSide) {
         o.status = 'REJECTED'
-        rejections['SLIPPED_THROUGH_STOP'] = (rejections['SLIPPED_THROUGH_STOP'] ?? 0) + 1
+        rejections['STOP_THROUGH_MARKET'] = (rejections['STOP_THROUGH_MARKET'] ?? 0) + 1
+        o.reasons.push({
+          code: 'STOP_THROUGH_MARKET',
+          message: `Price gapped past the stop before the fill (fill ${entryFill.toFixed(4)}, stop ${o.stopLoss.toFixed(4)}). The trade has no defined risk, so it is refused.`,
+          passed: false,
+        })
         cancelOcoSiblings(pending, o)
         continue
       }
+      if (o.takeProfit !== null) {
+        const targetOnWrongSide =
+          o.side === 'LONG' ? o.takeProfit <= entryFill : o.takeProfit >= entryFill
+        if (targetOnWrongSide) {
+          o.status = 'REJECTED'
+          rejections['TARGET_THROUGH_MARKET'] = (rejections['TARGET_THROUGH_MARKET'] ?? 0) + 1
+          o.reasons.push({
+            code: 'TARGET_THROUGH_MARKET',
+            message: `Price gapped past the target before the fill (fill ${entryFill.toFixed(4)}, target ${o.takeProfit.toFixed(4)}). Taking it would book a loss as a "take profit", so it is refused.`,
+            passed: false,
+          })
+          cancelOcoSiblings(pending, o)
+          continue
+        }
+      }
+
+      const actualR = Math.abs(entryFill - o.stopLoss)
 
       o.status = 'FILLED'
       o.filledBar = i
@@ -594,6 +627,28 @@ export function runBacktest(
       if (t.mfeR < -1e-9 || t.maeR < -1e-9) {
         push(`trade ${t.id} has a negative excursion (mfeR=${t.mfeR}, maeR=${t.maeR}). Both must be ≥ 0.`)
         break
+      }
+      // Protective levels must bracket the entry. A stop on the profitable
+      // side would turn a "stop loss" into free money; a target on the losing
+      // side would book a loss as a win. Both are caught at fill time — this
+      // is the belt-and-braces check that the ledger never contains one.
+      const stopWrong =
+        t.side === 'LONG' ? t.stopLoss >= t.entryPrice : t.stopLoss <= t.entryPrice
+      if (stopWrong) {
+        push(
+          `trade ${t.id} (${t.side}) has its stop ${t.stopLoss} on the wrong side of its entry ${t.entryPrice}.`,
+        )
+        break
+      }
+      if (t.takeProfit !== null) {
+        const targetWrong =
+          t.side === 'LONG' ? t.takeProfit <= t.entryPrice : t.takeProfit >= t.entryPrice
+        if (targetWrong) {
+          push(
+            `trade ${t.id} (${t.side}) has its target ${t.takeProfit} on the wrong side of its entry ${t.entryPrice}.`,
+          )
+          break
+        }
       }
     }
 

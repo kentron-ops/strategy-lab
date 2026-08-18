@@ -29,6 +29,11 @@ export type Operand =
   | { type: 'rangeExpansion' }
   | { type: 'bodyRatio' }
   | { type: 'value'; value: number }
+  /** Bollinger band line. `band` selects which of the three to read. */
+  | { type: 'bollinger'; period: number; stdDevs: number; band: 'upper' | 'middle' | 'lower' }
+  | { type: 'cci'; period: number }
+  /** Money Flow Index — needs volume; tick volume is an accepted proxy. */
+  | { type: 'mfi'; period: number }
   /** base ± ATR(period) × multiple — "an offset in ATR" price ref. */
   | { type: 'atrOffset'; base: Operand; multiple: number; atrPeriod: number }
 
@@ -76,11 +81,29 @@ export type EntryMode =
 
 export type Direction = 'long' | 'short' | 'both'
 
+/**
+ * Target definition.
+ *
+ * The first form is a DISTANCE from entry (in R, ATR multiples, or price).
+ * The second is a LEVEL read from an indicator at the signal bar — a
+ * mean-reversion trade aiming at the Bollinger middle wants "wherever the mean
+ * currently is", not a fixed distance. The level is fixed at entry, not
+ * re-read as the position ages, so the target never moves once the trade is
+ * live and the recorded R stays meaningful.
+ */
+export type TargetSpec =
+  | { unit: 'R' | 'ATR' | 'PRICE'; value: number }
+  | { unit: 'INDICATOR'; operand: Operand }
+
 export interface ExitSpec {
   stop: { unit: 'ATR' | 'PRICE'; value: number; atrPeriod?: number }
-  target: { unit: 'R' | 'ATR' | 'PRICE'; value: number } | null
+  target: TargetSpec | null
   timeoutBars: number | null
 }
+
+export const isIndicatorTarget = (
+  t: TargetSpec | null,
+): t is { unit: 'INDICATOR'; operand: Operand } => t?.unit === 'INDICATOR'
 
 export type FilterNode =
   | { kind: 'session'; sessions: Session[] }
@@ -172,6 +195,12 @@ export function operandLabel(o: Operand): string {
       return 'body ratio'
     case 'value':
       return String(o.value)
+    case 'bollinger':
+      return `BB${o.band === 'middle' ? 'mid' : o.band === 'upper' ? 'up' : 'low'}(${o.period},${o.stdDevs})`
+    case 'cci':
+      return `CCI(${o.period})`
+    case 'mfi':
+      return `MFI(${o.period})`
     case 'atrOffset':
       return `${operandLabel(o.base)} ${o.multiple >= 0 ? '+' : '−'} ${Math.abs(o.multiple)}×ATR(${o.atrPeriod})`
   }

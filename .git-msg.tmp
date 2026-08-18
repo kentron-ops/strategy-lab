@@ -1,0 +1,56 @@
+Add BB/CCI/MFI, gold presets, MetaTrader import, run history
+
+Indicators (core/indicators):
+- Bollinger Bands, CCI and MFI, each causal with explicit warm-up nulls
+  and each conventionally exact: Bollinger uses the POPULATION deviation,
+  CCI the mean ABSOLUTE deviation, MFI treats an unchanged typical price
+  as neither positive nor negative flow. Substituting the near-miss in
+  any of those is a silent error that shifts every reading, so each is
+  asserted against a hand-computed figure.
+- 19 golden tests plus scripts/differential/compare_indicators.py, which
+  reimplements all three from the definitions in pandas rather than
+  calling a TA library (a library can share our mistake and agree while
+  both are wrong). 14,910 values agree within 1e-9.
+- The reference check exposed real numerical weakness and both were
+  fixed, not tolerated: Bollinger used variance = E[x²] − E[x]², which
+  catastrophically cancels at gold's price/spread ratio, and CCI carried
+  a drifting rolling mean that dominated readings near zero. Two-pass
+  window arithmetic in both; Bollinger accuracy improved ~50x.
+
+Presets: Gold Mean Reversion (BB+CCI), the same plus MFI(14) 20/80, and
+Gold Momentum (Breakout) — all M30 XAUUSD, selectable in LAB. The
+mean-reversion pair needed a new capability: a target that is a LEVEL
+read from an indicator (the Bollinger middle) rather than a fixed
+distance, fixed at entry so R stays meaningful. The SpecEditor shows it
+read-only instead of silently discarding it.
+
+ENGINE BUG FOUND AND FIXED (found by the preset tests, not by luck):
+protective levels are priced off the signal bar's close but fill at the
+next bar's open. A gap across that boundary could leave a long's stop
+ABOVE its fill, so the "stop loss" would exit for a PROFIT — money
+invented from a gap and booked as a loss-limiting exit. The mirror case
+put a "take profit" on the losing side. The old guard only rejected a
+zero distance, so both slipped through. Fills whose levels are through
+the market are now refused by name (STOP_THROUGH_MARKET /
+TARGET_THROUGH_MARKET), with a runtime invariant and three golden tests
+so it cannot return silently.
+
+MetaTrader import: MT4 (headerless, date+time+OHLC+tickvol) and MT5
+(tab separated, <DATE> <TIME> <TICKVOL> headers). Two real parser gaps
+closed — YYYY.MM.DD was falling through to the DD.MM.YYYY branch and
+producing the wrong year, and split Date/Time columns collapsed every
+bar to midnight, which would have destroyed every session-conditioned
+result. Unrecognised files now name the supported layouts instead of
+saying only "no rows parsed". Tick volume is labelled as a proxy where
+MFI depends on it.
+
+RUN HISTORY: every completed backtest is persisted (strategy, dataset,
+date, expectancy + CI, net, win rate, trades, PF, max DD) with a new
+HISTORY tab, search/sort/filter, CSV export and included in the backup
+export. Capped at 500 rows, consecutive identical runs collapsed. This
+is the durable record of how much has been searched — the same instinct
+as the Prover's trials penalty, kept where it can be read.
+
+Tests 247 -> 302, all green. Build green. Metrics still reconcile.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>

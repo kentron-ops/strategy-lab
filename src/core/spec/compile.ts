@@ -9,7 +9,7 @@ import type {
 } from '../types'
 import type { Comparator, Condition, FilterNode, Operand, RuleGroup, StrategySpec } from './types'
 import { CMP_LABEL, operandLabel } from './types'
-import { atr, adx, ema, rollingHigh, rollingLow, rsi, sma } from '../indicators'
+import { atr, adx, bollinger, cci, ema, mfi, rollingHigh, rollingLow, rsi, sma } from '../indicators'
 import { hashObject } from '../util/hash'
 import { sessionAllowed } from '../strategy/helpers'
 
@@ -82,6 +82,15 @@ function operandAt(o: Operand, ctx: StrategyContext, i: number): number | null {
       return ctx.ind.rangeExpansion[i]
     case 'bodyRatio':
       return ctx.ind.bodyRatio[i]
+    case 'bollinger': {
+      // One cache entry per (period, stdDevs) holds all three lines.
+      const key = `bb:${o.period}:${o.stdDevs}:${o.band}`
+      return seriesFor(candles, key, () => bollinger(candles, o.period, o.stdDevs)[o.band])[i]
+    }
+    case 'cci':
+      return seriesFor(candles, `cci:${o.period}`, () => cci(candles, o.period))[i]
+    case 'mfi':
+      return seriesFor(candles, `mfi:${o.period}`, () => mfi(candles, o.period))[i]
     case 'atrOffset': {
       const base = operandAt(o.base, ctx, i)
       const a = seriesFor(candles, `atr:${o.atrPeriod}`, () => atr(candles, o.atrPeriod))[i]
@@ -159,9 +168,13 @@ export function compileSpec(spec: StrategySpec): Strategy {
   const id = specStrategyId(spec)
   const atrPeriod = spec.exit.stop.atrPeriod ?? 14
 
+  const indicatorTarget = spec.exit.target?.unit === 'INDICATOR'
   const defaults: Record<string, number | string | boolean> = {
     [P.stop]: spec.exit.stop.value,
-    [P.target]: spec.exit.target?.value ?? 0,
+    // An indicator target has no scalar to tune; the param stays at 0 and is
+    // not offered as a slider (see paramSpec below).
+    [P.target]:
+      spec.exit.target && spec.exit.target.unit !== 'INDICATOR' ? spec.exit.target.value : 0,
     [P.timeout]: spec.exit.timeoutBars ?? 0,
   }
   const paramSpec: ParamSpec[] = [
@@ -176,16 +189,6 @@ export function compileSpec(spec: StrategySpec): Strategy {
       sweep: sweepAround(spec.exit.stop.value),
     },
     {
-      key: P.target,
-      label: `Target (${spec.exit.target?.unit ?? 'R'})`,
-      kind: 'number',
-      min: 0,
-      max: 50,
-      step: 0.1,
-      help: 'Target from the spec. 0 = no target.',
-      sweep: spec.exit.target ? sweepAround(spec.exit.target.value) : undefined,
-    },
-    {
       key: P.timeout,
       label: 'Timeout (bars)',
       kind: 'number',
@@ -195,6 +198,24 @@ export function compileSpec(spec: StrategySpec): Strategy {
       help: 'Bars before a forced close. 0 disables.',
     },
   ]
+
+  // An indicator target is a level, not a number to tune — offering a slider
+  // for it would show a control that changes nothing.
+  if (!indicatorTarget) {
+    paramSpec.splice(1, 0, {
+      key: P.target,
+      label: `Target (${spec.exit.target?.unit ?? 'R'})`,
+      kind: 'number',
+      min: 0,
+      max: 50,
+      step: 0.1,
+      help: 'Target from the spec. 0 = no target.',
+      sweep:
+        spec.exit.target && spec.exit.target.unit !== 'INDICATOR'
+          ? sweepAround(spec.exit.target.value)
+          : undefined,
+    })
+  }
 
   if (spec.entryMode.mode === 'BREAKOUT_OCO') {
     defaults[P.lookback] = spec.entryMode.lookback
@@ -325,15 +346,30 @@ export function compileSpec(spec: StrategySpec): Strategy {
       reasons.push(r('BAD_STOP', 'Stop distance is not positive.', false))
       return { intents, reasons }
     }
-    const targetValue = num(p[P.target], spec.exit.target?.value ?? 0)
-    const targetDist =
-      targetValue <= 0 || !spec.exit.target
-        ? null
-        : spec.exit.target.unit === 'R'
-          ? stopDist * targetValue
-          : spec.exit.target.unit === 'ATR'
-            ? a * targetValue
-            : targetValue
+    const target = spec.exit.target
+
+    /**
+     * Distance from `price` to the target, for one side.
+     *
+     * Distance-based targets are symmetric, so the side is irrelevant. An
+     * INDICATOR target is a LEVEL, so the distance depends on which side of
+     * it the entry sits — and if the level is on the wrong side (a long whose
+     * target sits below the entry), there is no coherent trade: it returns
+     * `false` and the caller refuses rather than silently inverting it.
+     */
+    const targetDistFor = (side: 'LONG' | 'SHORT', price: number): number | null | false => {
+      if (!target) return null
+      if (target.unit === 'INDICATOR') {
+        const level = operandAt(target.operand, ctx, i)
+        if (level === null) return false
+        const dist = side === 'LONG' ? level - price : price - level
+        return dist > 0 ? dist : false
+      }
+      const value = num(p[P.target], target.value)
+      if (value <= 0) return null
+      return target.unit === 'R' ? stopDist * value : target.unit === 'ATR' ? a * value : value
+    }
+
     const timeoutBars = Math.round(num(p[P.timeout], spec.exit.timeoutBars ?? 0)) || null
 
     // ── entries by mode
@@ -345,10 +381,18 @@ export function compileSpec(spec: StrategySpec): Strategy {
       }
       const price = ctx.candle.c
       const both = spec.entryMode.simultaneousBothSides
+      const tLong = targetDistFor('LONG', price)
+      const tShort = targetDistFor('SHORT', price)
+      if (tLong === false && tShort === false) {
+        reasons.push(r('BAD_TARGET', 'Target level sits on the wrong side of the entry.', false))
+        return { intents, reasons }
+      }
       reasons.push(r('CADENCE_ENTRY', `Cadence entry (${describeGroup(spec.entry) || 'unconditional'}).`, true))
-      if (allowLong) intents.push(place('LONG', 'MARKET', price, stopDist, targetDist, timeoutBars, null, 1))
-      if (allowShort && (both || !allowLong)) {
-        intents.push(place('SHORT', 'MARKET', price, stopDist, targetDist, timeoutBars, null, 1))
+      if (allowLong && tLong !== false) {
+        intents.push(place('LONG', 'MARKET', price, stopDist, tLong, timeoutBars, null, 1))
+      }
+      if (allowShort && tShort !== false && (both || !allowLong)) {
+        intents.push(place('SHORT', 'MARKET', price, stopDist, tShort, timeoutBars, null, 1))
       }
       return { intents, reasons }
     }
@@ -367,11 +411,21 @@ export function compileSpec(spec: StrategySpec): Strategy {
       }
       const price = ctx.candle.c
       if (longOk) {
+        const t = targetDistFor('LONG', price)
+        if (t === false) {
+          reasons.push(r('BAD_TARGET', 'Long signal but the target level sits at or below the entry.', false))
+          return { intents, reasons }
+        }
         reasons.push(r('ENTRY_LONG', `Long rules met: ${describeGroup(spec.entry)}`, true))
-        intents.push(place('LONG', 'MARKET', price, stopDist, targetDist, timeoutBars, null, 1))
+        intents.push(place('LONG', 'MARKET', price, stopDist, t, timeoutBars, null, 1))
       } else if (shortOk && spec.entryShort) {
+        const t = targetDistFor('SHORT', price)
+        if (t === false) {
+          reasons.push(r('BAD_TARGET', 'Short signal but the target level sits at or above the entry.', false))
+          return { intents, reasons }
+        }
         reasons.push(r('ENTRY_SHORT', `Short rules met: ${describeGroup(spec.entryShort)}`, true))
-        intents.push(place('SHORT', 'MARKET', price, stopDist, targetDist, timeoutBars, null, 1))
+        intents.push(place('SHORT', 'MARKET', price, stopDist, t, timeoutBars, null, 1))
       }
       return { intents, reasons }
     }
@@ -412,11 +466,17 @@ export function compileSpec(spec: StrategySpec): Strategy {
         rangeLow: lo,
       }),
     )
-    if (allowLong) {
-      intents.push(place('LONG', 'STOP', buyTrigger, stopDist, targetDist, timeoutBars, group, expiry))
+    // Breakout targets are measured from each side's own trigger price.
+    const tLong = targetDistFor('LONG', buyTrigger)
+    const tShort = targetDistFor('SHORT', sellTrigger)
+    if (allowLong && tLong !== false) {
+      intents.push(place('LONG', 'STOP', buyTrigger, stopDist, tLong, timeoutBars, group, expiry))
     }
-    if (allowShort) {
-      intents.push(place('SHORT', 'STOP', sellTrigger, stopDist, targetDist, timeoutBars, group, expiry))
+    if (allowShort && tShort !== false) {
+      intents.push(place('SHORT', 'STOP', sellTrigger, stopDist, tShort, timeoutBars, group, expiry))
+    }
+    if (!intents.length) {
+      reasons.push(r('BAD_TARGET', 'Target level sits on the wrong side of both triggers.', false))
     }
     return { intents, reasons }
   }

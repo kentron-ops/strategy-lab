@@ -7,6 +7,7 @@ import { ReplayView } from './views/ReplayView'
 import { OptimizeView } from './views/OptimizeView'
 import { ProverView } from './views/ProverView'
 import { LibraryView } from './views/LibraryView'
+import { HistoryView } from './views/HistoryView'
 import { JournalView } from './views/JournalView'
 import { DataView } from './views/DataView'
 
@@ -18,6 +19,7 @@ const VIEWS: { key: ViewName; label: string }[] = [
   { key: 'OPTIMIZE', label: 'OPTIMIZE' },
   { key: 'PROVER', label: 'PROVER' },
   { key: 'LIBRARY', label: 'LIBRARY' },
+  { key: 'HISTORY', label: 'HISTORY' },
   { key: 'JOURNAL', label: 'JOURNAL' },
   { key: 'DATA', label: 'DATA' },
 ]
@@ -104,6 +106,7 @@ export function App(): React.ReactElement {
             {s.view === 'OPTIMIZE' && <OptimizeView />}
             {s.view === 'PROVER' && <ProverView />}
             {s.view === 'LIBRARY' && <LibraryView />}
+            {s.view === 'HISTORY' && <HistoryView />}
             {s.view === 'JOURNAL' && <JournalView />}
             {s.view === 'DATA' && <DataView />}
           </>

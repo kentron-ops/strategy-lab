@@ -8,8 +8,9 @@ import type {
   FilterNode,
   Operand,
   StrategySpec,
+  TargetSpec,
 } from '../../core/spec/types'
-import { SPEC_VERSION } from '../../core/spec/types'
+import { SPEC_VERSION, operandLabel } from '../../core/spec/types'
 import { validateSpec, specIsRunnable } from '../../core/spec/validate'
 import type { Session } from '../../core/types'
 import { SESSIONS } from '../../core/types'
@@ -27,8 +28,13 @@ type OperandKind =
   | 'rsi'
   | 'atr'
   | 'adx'
+  | 'cci'
+  | 'mfi'
   | 'rollingHigh'
   | 'rollingLow'
+  | 'bbUpper'
+  | 'bbMiddle'
+  | 'bbLower'
   | 'atrPercentile'
   | 'rangeExpansion'
   | 'bodyRatio'
@@ -41,6 +47,11 @@ const OPERAND_KINDS: { v: OperandKind; label: string; hasPeriod: boolean; hasVal
   { v: 'rsi', label: 'RSI', hasPeriod: true, hasValue: false },
   { v: 'atr', label: 'ATR', hasPeriod: true, hasValue: false },
   { v: 'adx', label: 'ADX', hasPeriod: true, hasValue: false },
+  { v: 'cci', label: 'CCI', hasPeriod: true, hasValue: false },
+  { v: 'mfi', label: 'MFI', hasPeriod: true, hasValue: false },
+  { v: 'bbUpper', label: 'BB upper', hasPeriod: true, hasValue: false },
+  { v: 'bbMiddle', label: 'BB middle', hasPeriod: true, hasValue: false },
+  { v: 'bbLower', label: 'BB lower', hasPeriod: true, hasValue: false },
   { v: 'rollingHigh', label: 'Rolling high', hasPeriod: true, hasValue: false },
   { v: 'rollingLow', label: 'Rolling low', hasPeriod: true, hasValue: false },
   { v: 'atrPercentile', label: 'ATR percentile', hasPeriod: false, hasValue: false },
@@ -48,6 +59,12 @@ const OPERAND_KINDS: { v: OperandKind; label: string; hasPeriod: boolean; hasVal
   { v: 'bodyRatio', label: 'Body ratio', hasPeriod: false, hasValue: false },
   { v: 'value', label: 'number…', hasPeriod: false, hasValue: true },
 ]
+
+const BB_BAND: Record<string, 'upper' | 'middle' | 'lower'> = {
+  bbUpper: 'upper',
+  bbMiddle: 'middle',
+  bbLower: 'lower',
+}
 
 const COMPARATORS: { v: Comparator; label: string }[] = [
   { v: 'GT', label: '>' },
@@ -62,8 +79,13 @@ function operandToUI(o: Operand): { kind: OperandKind; period: number; value: nu
   if (o.type === 'price' || o.type === 'prevPrice') return { kind: 'price', period: 14, value: 0 }
   if (o.type === 'value') return { kind: 'value', period: 14, value: o.value }
   if (o.type === 'atrOffset') return { kind: 'atr', period: o.atrPeriod, value: 0 }
-  if ('period' in o) return { kind: o.type, period: o.period, value: 0 }
-  return { kind: o.type, period: 14, value: 0 }
+  if (o.type === 'bollinger') {
+    const kind: OperandKind =
+      o.band === 'upper' ? 'bbUpper' : o.band === 'lower' ? 'bbLower' : 'bbMiddle'
+    return { kind, period: o.period, value: o.stdDevs }
+  }
+  if ('period' in o) return { kind: o.type as OperandKind, period: o.period, value: 0 }
+  return { kind: o.type as OperandKind, period: 14, value: 0 }
 }
 
 function uiToOperand(u: { kind: OperandKind; period: number; value: number }): Operand {
@@ -76,6 +98,17 @@ function uiToOperand(u: { kind: OperandKind; period: number; value: number }): O
     case 'rangeExpansion':
     case 'bodyRatio':
       return { type: u.kind }
+    case 'bbUpper':
+    case 'bbMiddle':
+    case 'bbLower':
+      return {
+        type: 'bollinger',
+        period: Math.max(2, Math.round(u.period)),
+        // `value` carries the band width for Bollinger operands; default to the
+        // conventional 2σ when the row was created from another operand type.
+        stdDevs: u.value > 0 ? u.value : 2,
+        band: BB_BAND[u.kind],
+      }
     default:
       return { type: u.kind, period: Math.max(1, Math.round(u.period)) } as Operand
   }
@@ -121,8 +154,19 @@ export function SpecEditor({ spec }: { spec: StrategySpec }): React.ReactElement
   )
   const [stopUnit, setStopUnit] = useState(spec.exit.stop.unit)
   const [stopValue, setStopValue] = useState(spec.exit.stop.value)
-  const [targetValue, setTargetValue] = useState(spec.exit.target?.value ?? 0)
-  const [targetUnit, setTargetUnit] = useState(spec.exit.target?.unit ?? 'R')
+  // A spec may target an indicator LEVEL (e.g. the Bollinger middle) rather
+  // than a distance. That has no numeric knob, so it is held aside and
+  // rendered read-only; the numeric controls only appear once the user
+  // explicitly switches to a distance-based target.
+  const [indicatorTarget, setIndicatorTarget] = useState<TargetSpec | null>(
+    spec.exit.target?.unit === 'INDICATOR' ? spec.exit.target : null,
+  )
+  const [targetValue, setTargetValue] = useState(
+    spec.exit.target && spec.exit.target.unit !== 'INDICATOR' ? spec.exit.target.value : 0,
+  )
+  const [targetUnit, setTargetUnit] = useState<'R' | 'ATR' | 'PRICE'>(
+    spec.exit.target && spec.exit.target.unit !== 'INDICATOR' ? spec.exit.target.unit : 'R',
+  )
   const [timeoutBars, setTimeoutBars] = useState(spec.exit.timeoutBars ?? 0)
   const [entryRows, setEntryRows] = useState<RuleRow[]>(
     spec.entry.rules.filter((r): r is Condition => r.kind === 'condition').map(conditionToRow),
@@ -165,13 +209,13 @@ export function SpecEditor({ spec }: { spec: StrategySpec }): React.ReactElement
       entryShort: direction === 'both' && mode === 'MARKET' ? spec.entryShort : spec.entryShort,
       exit: {
         stop: { unit: stopUnit, value: stopValue, atrPeriod: spec.exit.stop.atrPeriod ?? 14 },
-        target: targetValue > 0 ? { unit: targetUnit, value: targetValue } : null,
+        target: indicatorTarget ?? (targetValue > 0 ? { unit: targetUnit, value: targetValue } : null),
         timeoutBars: timeoutBars > 0 ? Math.round(timeoutBars) : null,
       },
       filters,
       meta: { ...spec.meta, specVersion: SPEC_VERSION },
     }
-  }, [spec, name, direction, mode, lookback, buffer, expiry, interval, stopUnit, stopValue, targetUnit, targetValue, timeoutBars, entryRows, filterRows, sessions, htf])
+  }, [spec, name, direction, mode, lookback, buffer, expiry, interval, stopUnit, stopValue, targetUnit, targetValue, indicatorTarget, timeoutBars, entryRows, filterRows, sessions, htf])
 
   const issues = useMemo(() => validateSpec(built), [built])
   const runnable = specIsRunnable(issues)
@@ -278,24 +322,46 @@ export function SpecEditor({ spec }: { spec: StrategySpec }): React.ReactElement
               </select>
             </div>
           </div>
-          <div className="field">
-            <span>{STR.specTarget}</span>
-            <div className="field-inline">
-              <input
-                type="number"
-                step={0.1}
-                min={0}
-                value={targetValue}
-                onChange={(e) => setTargetValue(Number(e.target.value))}
-              />
-              <select value={targetUnit} onChange={(e) => setTargetUnit(e.target.value as 'R' | 'ATR' | 'PRICE')}>
-                <option value="R">R</option>
-                <option value="ATR">ATR ×</option>
-                <option value="PRICE">price</option>
-              </select>
+          {indicatorTarget && indicatorTarget.unit === 'INDICATOR' ? (
+            <div className="field">
+              <span>{STR.specTarget}</span>
+              <div className="field-inline">
+                <input
+                  type="text"
+                  readOnly
+                  value={operandLabel(indicatorTarget.operand)}
+                  title="This target is a level read from an indicator at the signal bar, not a fixed distance."
+                />
+                <button
+                  className="btn small"
+                  onClick={() => setIndicatorTarget(null)}
+                  title="Replace the indicator level with a fixed distance target"
+                >
+                  use R…
+                </button>
+              </div>
+              <span className="hint">level, fixed at entry — not a distance</span>
             </div>
-            <span className="hint">0 = no target</span>
-          </div>
+          ) : (
+            <div className="field">
+              <span>{STR.specTarget}</span>
+              <div className="field-inline">
+                <input
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  value={targetValue}
+                  onChange={(e) => setTargetValue(Number(e.target.value))}
+                />
+                <select value={targetUnit} onChange={(e) => setTargetUnit(e.target.value as 'R' | 'ATR' | 'PRICE')}>
+                  <option value="R">R</option>
+                  <option value="ATR">ATR ×</option>
+                  <option value="PRICE">price</option>
+                </select>
+              </div>
+              <span className="hint">0 = no target</span>
+            </div>
+          )}
           <SliderNumber label={STR.specTimeout} value={timeoutBars} onChange={setTimeoutBars}
             min={0} max={500} step={1}
             help="Close the position after this many bars regardless of price. 0 disables the timeout." />

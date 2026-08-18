@@ -39,14 +39,29 @@ export interface CsvParseResult {
   headerMap: Record<string, number>
 }
 
+/**
+ * Column aliases.
+ *
+ * `t` is a single combined timestamp. `d` and `tm` are the SEPARATE date and
+ * time columns MetaTrader writes; when both appear they are joined before
+ * parsing. Headers are lower-cased and stripped of the angle brackets MT5
+ * uses (`<DATE>` → `date`) before matching.
+ */
 const CANDIDATES: Record<string, string[]> = {
-  t: ['timestamp', 'time', 'date', 'datetime', 'date_time', 'open_time', 'gmt time', 'local time'],
+  t: ['timestamp', 'datetime', 'date_time', 'open_time', 'gmt time', 'local time'],
+  d: ['date'],
+  tm: ['time'],
   o: ['open', 'o', 'bid open', 'openprice'],
   h: ['high', 'h', 'bid high', 'highprice'],
   l: ['low', 'l', 'bid low', 'lowprice'],
   c: ['close', 'c', 'bid close', 'closeprice', 'last'],
-  v: ['volume', 'vol', 'v', 'tickvol', 'tick volume'],
+  v: ['volume', 'vol', 'v', 'tickvol', 'tick volume', 'tickvolume', 'real volume'],
 }
+
+/** A bare date with no time-of-day, e.g. 2024.01.02 or 2024-01-02. */
+const DATE_ONLY = /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/
+/** A bare time of day, e.g. 00:00 or 13:30:00. */
+const TIME_ONLY = /^\d{1,2}:\d{2}(:\d{2})?$/
 
 function detectSeparator(line: string): string {
   const candidates = [',', ';', '\t', '|']
@@ -84,14 +99,41 @@ function splitRow(line: string, sep: string): string[] {
 }
 
 function mapHeaders(headers: string[]): Record<string, number> {
-  const lower = headers.map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ''))
+  const lower = headers.map((h) =>
+    h
+      .trim()
+      .toLowerCase()
+      .replace(/^"|"$/g, '')
+      .replace(/^<|>$/g, ''), // MT5 writes <DATE>, <TICKVOL>, …
+  )
   const map: Record<string, number> = {}
   for (const [key, names] of Object.entries(CANDIDATES)) {
     let idx = lower.findIndex((h) => names.includes(h))
     if (idx === -1) idx = lower.findIndex((h) => names.some((n) => h.startsWith(n)))
     if (idx !== -1) map[key] = idx
   }
+  // A lone date or time column IS the timestamp; only a genuine pair needs
+  // joining. Collapsing here keeps the row loop simple.
+  if (map.t === undefined) {
+    if (map.d !== undefined && map.tm === undefined) {
+      map.t = map.d
+      delete map.d
+    } else if (map.tm !== undefined && map.d === undefined) {
+      map.t = map.tm
+      delete map.tm
+    }
+  }
   return map
+}
+
+/**
+ * Headerless MetaTrader 4 export:
+ *   2024.01.02,00:00,2063.12,2064.55,2062.80,2063.90,1234
+ * Date and time occupy the first two columns, so the generic positional
+ * fallback (timestamp,open,high,…) would read the time as the open price.
+ */
+function looksLikeHeaderlessMetaTrader(row: string[]): boolean {
+  return row.length >= 6 && DATE_ONLY.test(row[0] ?? '') && TIME_ONLY.test(row[1] ?? '')
 }
 
 /**
@@ -127,9 +169,12 @@ export function parseTimestamp(raw: string, utcOffsetMinutes: number): number {
     return t - utcOffsetMinutes * 60_000
   }
 
-  // YYYY-MM-DD HH:MM:SS  (naive — interpret with the declared offset)
+  // YYYY-MM-DD / YYYY.MM.DD / YYYY/MM/DD, optionally with a time.
+  // The dot form is what MetaTrader writes (2024.01.02), so it must be
+  // accepted here or every MT export lands on the DD.MM.YYYY branch above
+  // and silently produces the wrong year.
   const ymd = s.match(
-    /^(\d{4})[-/](\d{2})[-/](\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/,
+    /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/,
   )
   if (ymd) {
     const [, yyyy, mm, dd, hh = '0', mi = '0', ss = '0'] = ymd
@@ -169,20 +214,36 @@ export function parseCsv(text: string, opts: CsvParseOptions): CsvParseResult {
 
   const hasHeader = headerMap.o !== undefined && headerMap.c !== undefined
   if (!hasHeader) {
-    // Assume the canonical positional order when there is no recognisable header.
-    headerMap = { t: 0, o: 1, h: 2, l: 3, c: 4, v: 5 }
+    const firstRow = splitRow(lines[0], sep)
+    if (looksLikeHeaderlessMetaTrader(firstRow)) {
+      headerMap = { d: 0, tm: 1, o: 2, h: 3, l: 4, c: 5, v: 6 }
+      errors.push(
+        'Read as a MetaTrader export (date, time, open, high, low, close, tick volume). Tick volume is a trade-count proxy, not real traded volume — MFI and any volume-weighted reading inherit that limitation.',
+      )
+    } else {
+      // Generic positional fallback.
+      headerMap = { t: 0, o: 1, h: 2, l: 3, c: 4, v: 5 }
+      errors.push(
+        'No recognisable header row. Assuming column order: timestamp, open, high, low, close, volume.',
+      )
+    }
     startLine = 0
-    errors.push(
-      'No recognisable header row. Assuming column order: timestamp, open, high, low, close, volume.',
-    )
   }
 
-  for (const key of ['t', 'o', 'h', 'l', 'c'] as const) {
+  const hasCombinedDateTime = headerMap.d !== undefined && headerMap.tm !== undefined
+  const required = hasCombinedDateTime
+    ? (['d', 'tm', 'o', 'h', 'l', 'c'] as const)
+    : (['t', 'o', 'h', 'l', 'c'] as const)
+
+  for (const key of required) {
     if (headerMap[key] === undefined) {
       return {
         dataset: null,
         errors: [
-          `Could not find a "${key}" column. Expected headers like: timestamp, open, high, low, close, volume.`,
+          `Could not find a "${key}" column.`,
+          'Supported layouts: a single timestamp column with open/high/low/close/volume headers, ' +
+            'or a MetaTrader export with separate Date and Time columns ' +
+            '(MT4: 2024.01.02,00:00,open,high,low,close,tickvol — MT5: <DATE> <TIME> <OPEN> <HIGH> <LOW> <CLOSE> <TICKVOL>).',
         ],
         skipped,
         headerMap,
@@ -193,7 +254,12 @@ export function parseCsv(text: string, opts: CsvParseOptions): CsvParseResult {
   const candles: Candle[] = []
   for (let i = startLine; i < lines.length; i++) {
     const row = splitRow(lines[i], sep)
-    const t = parseTimestamp(row[headerMap.t] ?? '', opts.utcOffsetMinutes)
+    // MetaTrader splits the stamp across two columns; join them before parsing
+    // so a bar keeps its time of day instead of collapsing to midnight.
+    const rawStamp = hasCombinedDateTime
+      ? `${row[headerMap.d] ?? ''} ${row[headerMap.tm] ?? ''}`.trim()
+      : (row[headerMap.t] ?? '')
+    const t = parseTimestamp(rawStamp, opts.utcOffsetMinutes)
     if (!Number.isFinite(t)) {
       skipped.push({ line: i + 1, text: lines[i].slice(0, 120), reason: 'unparseable timestamp' })
       continue
@@ -213,7 +279,21 @@ export function parseCsv(text: string, opts: CsvParseOptions): CsvParseResult {
   }
 
   if (!candles.length) {
-    return { dataset: null, errors: [...errors, 'No rows could be parsed.'], skipped, headerMap }
+    // Reaching here usually means the file is a layout we did not recognise
+    // and the positional guess was wrong. Saying only "no rows parsed" leaves
+    // the user with nothing to act on, so spell out what IS supported.
+    return {
+      dataset: null,
+      errors: [
+        ...errors,
+        'No rows could be parsed.',
+        'Supported layouts: a header row naming timestamp/open/high/low/close/volume, ' +
+          'or a MetaTrader export with separate Date and Time columns ' +
+          '(MT4: 2024.01.02,00:00,open,high,low,close,tickvol — MT5: <DATE> <TIME> <OPEN> <HIGH> <LOW> <CLOSE> <TICKVOL>).',
+      ],
+      skipped,
+      headerMap,
+    }
   }
 
   const normalized = normalizeCandles(candles)

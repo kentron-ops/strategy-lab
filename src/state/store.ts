@@ -18,7 +18,7 @@ import {
 } from '../core/types'
 import { buildSampleDataset, SAMPLE_DATASET_ID } from '../core/data/sample'
 import { makeConfig } from '../core/strategy/registry'
-import { storage, type LibraryEntry } from '../storage/storageAdapter'
+import { storage, type LibraryEntry, type RunRecord } from '../storage/storageAdapter'
 import { compute } from './localCompute'
 import type { JournalEntry } from '../core/journal/types'
 import type { SplitResult } from '../core/optimization/walkForward'
@@ -52,6 +52,7 @@ export type ViewName =
   | 'OPTIMIZE'
   | 'PROVER'
   | 'LIBRARY'
+  | 'HISTORY'
   | 'JOURNAL'
   | 'DATA'
 
@@ -90,6 +91,8 @@ interface LabState {
   library: LibraryEntry[]
   /** Configurations tried per strategy family — feeds the trials penalty. */
   trials: Record<string, number>
+  /** Newest-first record of every backtest that has been run. */
+  runs: RunRecord[]
 
   // ── machinery
   recompute: RecomputeState
@@ -126,6 +129,7 @@ interface LabState {
   addTrials(familyKey: string, n: number): void
   currentFamilyKey(): string
   currentTrials(): number
+  clearRuns(): Promise<void>
 
   activeDataset(): Dataset | null
   backtestConfig(): BacktestConfig
@@ -175,6 +179,12 @@ async function doRecompute(): Promise<void> {
       useLab.setState({ recompute: { ...cur.recompute, progress: f } })
     })
     if (runSeq !== mySeq) return // superseded by a newer edit
+
+    // Record the run. This is the audit trail of everything tested — written
+    // for completed runs only, so a superseded mid-drag recompute never
+    // pollutes the history with a result the user never saw.
+    void recordRun(dataset, config, result)
+
     useLab.setState({
       result,
       split: null,
@@ -198,6 +208,68 @@ async function doRecompute(): Promise<void> {
         error: err instanceof Error ? err.message : String(err),
       },
     })
+  }
+}
+
+/**
+ * Append one completed backtest to the run history.
+ *
+ * Identical consecutive runs are collapsed: the reactive graph recomputes on
+ * dataset switches and view changes as well as on real edits, and logging the
+ * same numbers twice in a row would make the history harder to read without
+ * telling anyone anything new.
+ */
+let lastRunFingerprint = ''
+
+async function recordRun(
+  dataset: Dataset,
+  config: BacktestConfig,
+  result: BacktestResult,
+): Promise<void> {
+  const m = result.metrics
+  const spec = config.strategy.spec as StrategySpec | undefined
+  const fingerprint = hashObject({
+    d: dataset.hash,
+    s: config.strategy.strategyId,
+    p: config.strategy.params,
+    r: config.risk,
+    c: config.costs,
+    i: config.intrabar,
+  })
+  if (fingerprint === lastRunFingerprint) return
+  lastRunFingerprint = fingerprint
+
+  const record: RunRecord = {
+    id: `run_${Date.now().toString(36)}_${fingerprint.slice(0, 6)}`,
+    ranAt: Date.now(),
+    strategyName: config.strategy.name,
+    strategyId: config.strategy.strategyId,
+    specId: spec?.id ?? null,
+    datasetId: dataset.id,
+    datasetSymbol: dataset.symbol,
+    datasetTimeframe: dataset.timeframe,
+    datasetHash: dataset.hash,
+    expectancyR: m.expectancyR.point,
+    expectancyCiLow: m.expectancyR.low,
+    expectancyCiHigh: m.expectancyR.high,
+    netPnl: m.netPnl,
+    returnPct: m.returnPct,
+    winRate: m.winRate.point,
+    trades: m.trades,
+    profitFactor: Number.isFinite(m.profitFactor) ? m.profitFactor : 0,
+    maxDrawdownPct: m.maxDrawdownPct,
+    sampleAdequate: m.sampleAdequate,
+    ambiguousTrades: result.ambiguity.ambiguousTrades,
+    intrabar: config.intrabar,
+    durationMs: result.durationMs,
+  }
+
+  try {
+    await storage.saveRun(record)
+    useLab.setState({ runs: [record, ...useLab.getState().runs].slice(0, 200) })
+  } catch {
+    // History is a convenience, not the product. A storage failure must never
+    // take down the backtest the user is actually looking at.
   }
 }
 
@@ -226,6 +298,7 @@ export const useLab = create<LabState>((set, get) => ({
   proving: { running: false, stage: '', progress: 0, error: null },
   library: [],
   trials: {},
+  runs: [],
 
   recompute: {
     running: false,
@@ -240,7 +313,7 @@ export const useLab = create<LabState>((set, get) => ({
   hydrated: false,
 
   async hydrate() {
-    const [storedDatasets, configs, theme, activeId, library, trials, acceptIfStored] =
+    const [storedDatasets, configs, theme, activeId, library, trials, acceptIfStored, runs] =
       await Promise.all([
         storage.listDatasets(),
         storage.listConfigs(),
@@ -249,6 +322,7 @@ export const useLab = create<LabState>((set, get) => ({
         storage.listLibrary(),
         storage.getSetting<Record<string, number>>('trials', {}),
         storage.getSetting<AcceptIf | null>('acceptIf', null),
+        storage.listRuns(200),
       ])
 
     let datasets = storedDatasets
@@ -264,6 +338,7 @@ export const useLab = create<LabState>((set, get) => ({
       theme,
       library,
       trials,
+      runs,
       acceptIf: acceptIfStored ?? { ...DEFAULT_ACCEPT_IF, registeredAt: Date.now() },
       activeDatasetId:
         activeId && datasets.some((d) => d.id === activeId)
@@ -462,6 +537,11 @@ export const useLab = create<LabState>((set, get) => ({
 
   currentTrials() {
     return Math.max(1, get().trials[get().currentFamilyKey()] ?? 1)
+  },
+
+  async clearRuns() {
+    await storage.clearRuns()
+    set({ runs: [] })
   },
 
   activeDataset() {

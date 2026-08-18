@@ -325,6 +325,71 @@ describe('golden: spread + commission + slippage combine additively per trade', 
   })
 })
 
+// ── 8b. A gap past the stop must refuse the trade, not book free money ────
+
+describe('golden: a gap through the protective level refuses the fill', () => {
+  it('a LONG whose stop ends up above the fill is rejected, not opened', () => {
+    // Signal bar closes at 100; the strategy sets its stop at 95. The next bar
+    // GAPS DOWN to open at 90 — the fill price. The stop (95) is now ABOVE the
+    // entry (90). If the engine accepted this, the "stop loss" would exit at
+    // 95 for a +5 PROFIT on a long, recorded as exitReason STOP.
+    //
+    // That is money invented out of a gap, so the fill must be refused.
+    const candles = [
+      bar(0, 101, 101, 100, 100),
+      bar(300000, 100, 100.5, 99.5, 100),   // i=1: strategy fires, stop 95
+      bar(600000, 90, 91, 89, 90),          // i=2: gaps down, fill would be 90
+      bar(900000, 90, 96, 89, 95),          // i=3: would have "stopped" at 95
+    ]
+    makeOneShot({ id: 'gold_gap_stop', side: 'LONG', stopPrice: 95, targetPrice: 130, entryBar: 1 })
+    const cfg = makeFrictionlessConfig('oco_breakout')
+    cfg.strategy = frictionlessOneShotConfig('gold_gap_stop')
+    const r = runBacktest(makeDataset(candles), cfg)
+
+    expect(r.trades).toHaveLength(0)
+    expect(r.rejections.STOP_THROUGH_MARKET).toBe(1)
+    // And the books stay clean.
+    expect(r.warnings.filter((w) => w.startsWith('INVARIANT'))).toHaveLength(0)
+  })
+
+  it('a LONG whose target ends up below the fill is rejected too', () => {
+    // Mirror failure: the gap carries the fill ABOVE the take profit, so the
+    // "take profit" would book a loss.
+    const candles = [
+      bar(0, 99, 100, 99, 100),
+      bar(300000, 100, 100.5, 99.5, 100),   // i=1: fires, target 110, stop 95
+      bar(600000, 120, 121, 119, 120),      // i=2: gaps UP past the target
+      bar(900000, 120, 121, 108, 110),
+    ]
+    makeOneShot({ id: 'gold_gap_target', side: 'LONG', stopPrice: 95, targetPrice: 110, entryBar: 1 })
+    const cfg = makeFrictionlessConfig('oco_breakout')
+    cfg.strategy = frictionlessOneShotConfig('gold_gap_target')
+    const r = runBacktest(makeDataset(candles), cfg)
+
+    expect(r.trades).toHaveLength(0)
+    expect(r.rejections.TARGET_THROUGH_MARKET).toBe(1)
+  })
+
+  it('a normal fill with both levels intact is still accepted', () => {
+    // The guard must not reject ordinary trades — a small adverse gap that
+    // leaves the stop below the fill is perfectly tradeable.
+    const candles = [
+      bar(0, 101, 101, 100, 100),
+      bar(300000, 100, 100.5, 99.5, 100),
+      bar(600000, 98, 99, 97, 98),          // gaps down to 98, stop 95 still below
+      bar(900000, 98, 99, 94, 95),
+    ]
+    makeOneShot({ id: 'gold_gap_ok', side: 'LONG', stopPrice: 95, targetPrice: 130, entryBar: 1 })
+    const cfg = makeFrictionlessConfig('oco_breakout')
+    cfg.strategy = frictionlessOneShotConfig('gold_gap_ok')
+    const r = runBacktest(makeDataset(candles), cfg)
+
+    expect(r.trades).toHaveLength(1)
+    expect(r.trades[0].entryPrice).toBeCloseTo(98, 10)
+    expect(r.trades[0].stopLoss).toBeLessThan(r.trades[0].entryPrice)
+  })
+})
+
 // ── 9. Multi-trade ledger reconciles to ending equity ─────────────────────
 
 describe('golden: multi-trade ledger reconciles to ending equity', () => {

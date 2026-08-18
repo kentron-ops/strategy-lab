@@ -13,6 +13,44 @@ export interface LibraryEntry {
 }
 
 /**
+ * One row in the RUN HISTORY: the record of a backtest that was actually run.
+ *
+ * This is the honest audit trail of what was tried. It matters for the same
+ * reason the trials counter matters — a strategy that looks good on its
+ * fortieth variation is not the same discovery as one that looked good first
+ * time, and only a durable record can tell the difference later.
+ *
+ * Deliberately small: headline metrics and provenance, never the full trade
+ * ledger, so a long session of dragging sliders cannot fill the user's disk.
+ */
+export interface RunRecord {
+  id: string
+  ranAt: number
+  strategyName: string
+  strategyId: string
+  /** Present when the run came from a compiled spec rather than a built-in. */
+  specId: string | null
+  datasetId: string
+  datasetSymbol: string
+  datasetTimeframe: string
+  datasetHash: string
+  /** Key metrics — the four the user asked to see, plus context. */
+  expectancyR: number
+  expectancyCiLow: number
+  expectancyCiHigh: number
+  netPnl: number
+  returnPct: number
+  winRate: number
+  trades: number
+  profitFactor: number
+  maxDrawdownPct: number
+  sampleAdequate: boolean
+  ambiguousTrades: number
+  intrabar: string
+  durationMs: number
+}
+
+/**
  * StorageAdapter — everything persistent sits behind this interface (§3).
  * Today it is IndexedDB via Dexie; a cloud implementation would slot in here
  * without touching core or UI. Export/import as JSON means the user owns their
@@ -45,6 +83,11 @@ export interface StorageAdapter {
   saveLibraryEntry(entry: LibraryEntry): Promise<void>
   deleteLibraryEntry(id: string): Promise<void>
 
+  // run history
+  listRuns(limit?: number): Promise<RunRecord[]>
+  saveRun(run: RunRecord): Promise<void>
+  clearRuns(): Promise<void>
+
   // settings
   getSetting<T>(key: string, fallback: T): Promise<T>
   setSetting(key: string, value: unknown): Promise<void>
@@ -60,6 +103,7 @@ class LabDb extends Dexie {
   journal!: Table<JournalEntry, string>
   settings!: Table<StoredSettings, string>
   library!: Table<LibraryEntry, string>
+  runs!: Table<RunRecord, string>
 
   constructor() {
     super('strategy-lab')
@@ -76,8 +120,22 @@ class LabDb extends Dexie {
       settings: 'key',
       library: 'id, savedAt',
     })
+    this.version(3).stores({
+      datasets: 'id, symbol, timeframe',
+      configs: 'id, strategyId',
+      journal: 'id, entryTime, symbol',
+      settings: 'key',
+      library: 'id, savedAt',
+      runs: 'id, ranAt, strategyId',
+    })
   }
 }
+
+/**
+ * How many runs to keep. Every slider nudge is a run, so an unbounded table
+ * would grow without limit; the oldest are trimmed once past this.
+ */
+const MAX_RUNS = 500
 
 const EXPORT_VERSION = 1
 
@@ -124,6 +182,27 @@ export class IndexedDbAdapter implements StorageAdapter {
     return this.db.library.delete(id)
   }
 
+  listRuns(limit = 200): Promise<RunRecord[]> {
+    return this.db.runs.orderBy('ranAt').reverse().limit(limit).toArray()
+  }
+
+  async saveRun(run: RunRecord): Promise<void> {
+    await this.db.runs.put(run)
+    // Trim the tail so a long slider session cannot grow the table forever.
+    const count = await this.db.runs.count()
+    if (count > MAX_RUNS) {
+      const oldest = await this.db.runs
+        .orderBy('ranAt')
+        .limit(count - MAX_RUNS)
+        .primaryKeys()
+      await this.db.runs.bulkDelete(oldest)
+    }
+  }
+
+  clearRuns(): Promise<void> {
+    return this.db.runs.clear()
+  }
+
   async getSetting<T>(key: string, fallback: T): Promise<T> {
     const row = await this.db.settings.get(key)
     return row === undefined ? fallback : (row.value as T)
@@ -133,15 +212,16 @@ export class IndexedDbAdapter implements StorageAdapter {
   }
 
   async exportAll(): Promise<string> {
-    const [datasets, configs, journal, settings, library] = await Promise.all([
+    const [datasets, configs, journal, settings, library, runs] = await Promise.all([
       this.db.datasets.toArray(),
       this.db.configs.toArray(),
       this.db.journal.toArray(),
       this.db.settings.toArray(),
       this.db.library.toArray(),
+      this.db.runs.toArray(),
     ])
     return JSON.stringify(
-      { version: EXPORT_VERSION, exportedAt: new Date().toISOString(), datasets, configs, journal, settings, library },
+      { version: EXPORT_VERSION, exportedAt: new Date().toISOString(), datasets, configs, journal, settings, library, runs },
       null,
       0,
     )
@@ -155,6 +235,7 @@ export class IndexedDbAdapter implements StorageAdapter {
       journal?: JournalEntry[]
       settings?: StoredSettings[]
       library?: LibraryEntry[]
+      runs?: RunRecord[]
     }
     try {
       parsed = JSON.parse(json)
@@ -169,13 +250,14 @@ export class IndexedDbAdapter implements StorageAdapter {
     }
     await this.db.transaction(
       'rw',
-      [this.db.datasets, this.db.configs, this.db.journal, this.db.settings, this.db.library],
+      [this.db.datasets, this.db.configs, this.db.journal, this.db.settings, this.db.library, this.db.runs],
       async () => {
         if (parsed.datasets?.length) await this.db.datasets.bulkPut(parsed.datasets)
         if (parsed.configs?.length) await this.db.configs.bulkPut(parsed.configs)
         if (parsed.journal?.length) await this.db.journal.bulkPut(parsed.journal)
         if (parsed.settings?.length) await this.db.settings.bulkPut(parsed.settings)
         if (parsed.library?.length) await this.db.library.bulkPut(parsed.library)
+        if (parsed.runs?.length) await this.db.runs.bulkPut(parsed.runs)
       },
     )
     const counts = [
